@@ -11,11 +11,20 @@
 
 安全：默认只读；click/select/open-menu 只做点击/展开的轻量交互（不提交表单、不导航、不改数据）。
 """
+import os
 import re
 import sys
 import time
 import argparse
 from playwright.sync_api import sync_playwright
+
+# Windows 控制台 UTF-8 修复（避免中文乱码）
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import win_utf8
+    win_utf8.ensure_utf8_console()
+except Exception:
+    pass
 
 CDP_URL = "http://127.0.0.1:9222"
 
