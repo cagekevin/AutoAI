@@ -113,23 +113,34 @@ G:\AutoAI_01\
 
 5. **把抓到的净化 HTML 与现有 `UI` 字典比对**，判断选择器是否失效、如何更新。
 
-**现成工具 `tools/dom_sniffer.py`（推荐直接用）**：
-AI 可直接运行这个封装好的工具，一行命令抓 DOM，无需手写连接逻辑：
+**首选工具 `tools/webctl.py`（通用浏览器交互控制台，推荐）**：
+AI 进入 REPL 后像操作浏览器一样**一条条命令连续操作**，完成「认路→摸结构→找锚点→展开菜单→点击验证」完整闭环，**不用自己写 Playwright 代码**：
 ```bash
 # 在 G:\AutoAI_01 下（venv python）：
-python tools/dom_sniffer.py                                    # 抓当前站整页净化 DOM
-python tools/dom_sniffer.py --url lovart.ai                    # 抓指定站点匹配页
-python tools/dom_sniffer.py --selector '[data-testid="xxx"]'   # 提取指定元素结构（含 testid）
-python tools/dom_sniffer.py --find "Nano Banana"               # 搜含该文本的元素 + 父级锚点链
-python tools/dom_sniffer.py --find "参考图" --depth 3          # 找上传按钮锚点
-# —— 展开下拉菜单后再抓（应对 hover/click 才弹出的菜单）——
-python tools/dom_sniffer.py --open '[data-testid="agent-mode-switch-trigger"]' --open-action click --find "图像"
-python tools/dom_sniffer.py --open '.menu-trigger' --open-action hover --find "2K"
+python tools/webctl.py
+# 交互内命令：
+open                      连接 9222 已登录浏览器
+page                      看当前页面 URL/标题
+buttons                   列出页面所有可见按钮（摸结构）
+find <文本>               搜含文本的元素 + 锚点链（找 data-testid）
+open-menu <选择器> [click|hover]   展开下拉菜单（默认 hover）
+click <文本>              点击含该文本的按钮（精确 innerText，避开 has-text 冒号坑）
+state <选择器>            查看某元素内容（验证选择器是否生效）
+html                      抓整页净化 DOM
+help / quit
 ```
-- `--find` 是**找选择器神器**：输入你想点的按钮文案，它返回该元素及其父级链的 testid/class/id，直接就能看出用哪个锚点。
-- `--open` 专治**点击/hover 才弹出的下拉菜单**：先展开触发器，再抓弹出来的选项。`--open-action` 选 `click` 或 `hover`（Radix 等组件常用 hover）。
-- 默认**只读**；`--open` 仅做展开菜单的轻量交互（不提交/不改值/不导航）。
+- 典型用法：`open` → `page` → `buttons` 看有哪些按钮 → `find "新建项目"` 找锚点 → `open-menu 触发器 click` 展开下拉 → `click "2K"` 试点 → `state 按钮选择器` 确认生效。
+- **`find` 是找选择器神器**：返回元素及其父级链的 testid/class/id。**`state` 是验证神器**：确认改的选择器真的能拿到元素。
+- 默认**只读**；`click`/`open-menu` 只做点击/展开的轻量交互（不提交/不改值/不导航）。
 - 前提：Chrome 已带 9222 启动（`启动控制台.bat` 会做）。若报 `ECONNREFUSED`，提示用户先启动项目。
+
+**单命令工具 `tools/dom_sniffer.py`（可选，适合一次性/脚本化）**：
+当 AI 只需单次抓取（不想进交互）时可用，核心逻辑与 webctl 相同：
+```bash
+python tools/dom_sniffer.py --find "Nano Banana"      # 搜文本+锚点链
+python tools/dom_sniffer.py --selector '[data-testid="xxx"]'   # 提取元素结构
+python tools/dom_sniffer.py --open '触发器' --open-action click --find "图像"   # 展开菜单后找
+```
 
 **本项目已有的辅助脚本**：`tools/engine_ide.py`、`tools/工具/adapter_*.py` 里有现成的 CDP 连接、DOM 提取、`execute_action` 路由逻辑，AI 可参考或复用其模式。
 
