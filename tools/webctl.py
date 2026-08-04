@@ -278,6 +278,7 @@ class WebCtl:
 def main():
     ap = argparse.ArgumentParser(description="通用浏览器交互控制台")
     ap.add_argument("--url", help="连上后自动导航到该 URL（可选）")
+    ap.add_argument("--run", help="一次性执行命令序列，用 | 分隔，如 --run \"page|buttons|quit\"")
     args = ap.parse_args()
 
     ctl = WebCtl()
@@ -291,6 +292,25 @@ def main():
         print(f"❌ 连接失败: {e}")
         print("提示：请先用 启动控制台.bat 启动项目（Chrome 带 9222）。")
         return 1
+
+    if args.run:
+        # 非交互：一次性执行命令序列
+        for line in args.run.split("|"):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            mname = ctl.CMD.get(parts[0].lower())
+            if not mname:
+                print(f"未知命令: {parts[0]}")
+                continue
+            try:
+                getattr(ctl, mname)(parts[1:])
+            except Exception as e:
+                print(f"❌ {parts[0]} 执行异常: {str(e)[:120]}")
+        ctl.close()
+        return 0
+
     ctl.run()
     return 0
 
