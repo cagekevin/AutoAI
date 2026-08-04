@@ -551,8 +551,13 @@ class WebCtl:
             print("用法: open-menu <选择器> [click|hover]")
             return
             
-        action = args[-1] if len(args) > 1 and args[-1] in ("click", "hover") else "hover"
-        sel = " ".join(args[:-1]) if action in args[-1:] else " ".join(args)
+        # 解析动作：仅当最后一个是显式的 click/hover 关键字时才作为动作，其余全是选择器
+        if len(args) > 1 and args[-1] in ("click", "hover"):
+            action = args[-1]
+            sel = " ".join(args[:-1])
+        else:
+            action = "hover"
+            sel = " ".join(args)
         
         loc = self.page.locator(sel).last
         loc.scroll_into_view_if_needed(timeout=5000)
