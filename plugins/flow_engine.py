@@ -44,7 +44,7 @@ class FlowEngine(BaseAIEngine):
         try:
             self._log(f"   -> ⚙️ 正在装填数量: {q_str}")
             self._click('button[aria-haspopup="menu"]:has-text("Nano")')
-            self._click(f'button:role="tab"]:has-text("{q_str}")')
+            self._click(f'button[role="tab"]:has-text("{q_str}")')
             self._log(f"      ✅ 数量装填成功。")
         except Exception as e:
             self._log(f"      ⚠️ 数量装填异常 (非致命): {str(e)[:40]}")

@@ -10,12 +10,6 @@
             --primary: #3b82f6; --danger: #ef4444; --success: #10b981;
             --banner-bg: #e0f2fe; --banner-text: #0369a1;
         }
-        /* 🌙 夜间模式视觉变量 */
-        body.night-mode { 
-            --bg: #020617; --panel: #0f172a; --text: #94a3b8; --border: #1e293b; 
-            --banner-bg: #1e1b4b; --banner-text: #818cf8;
-        }
-        
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, sans-serif; font-size: 13px; }
         body { display: flex; flex-direction: column; height: 100vh; background: var(--bg); color: var(--text); overflow: hidden; transition: 0.3s; }
         
@@ -37,8 +31,6 @@
         .btn-primary:hover { background: #2563eb; }
         .btn-danger { background: #fee2e2; color: #dc2626; border-color: #fca5a5; }
         .btn-danger:hover { background: #fecaca; }
-        .btn-night { background: #1e293b; color: #fff; border-color: #1e293b; }
-        .btn-night:hover { background: #334155; }
         .btn-clear { border: none; color: #64748b; background: transparent; }
         .btn-success { background: var(--success); color: #fff; border: none; }
         .btn-term-clear { background: transparent; border-color: #334155; color: #64748b; }
@@ -65,13 +57,6 @@
         .q-btn-edit { padding: 2px 8px; color: var(--primary); background: transparent; border-color: var(--border); }
         .q-btn-rm { padding: 2px 8px; color: var(--danger); background: transparent; border-color: var(--border); }
         
-        /* ================= 夜间模式大屏 ================= */
-        .night-overlay { flex: 1; display: flex; align-items: center; flex-direction: column; justify-content: center; text-align: center; color: #818cf8; }
-        .night-icon { font-size: 60px; margin-bottom: 20px; }
-        .night-title { font-size: 20px; font-weight: bold; color: #a5b4fc; }
-        .night-desc { margin-top: 10px; opacity: 0.7; font-size: 14px; }
-        .night-stop-btn { margin-top: 40px; padding: 10px 20px; }
-
         /* ================= 终端区组件 ================= */
         .term-header { padding: 12px 20px; background: #020617; border-bottom: 1px solid #1e293b; }
         .term-prog { color: #94a3b8; font-family: monospace; font-size: 12px; }
@@ -108,7 +93,6 @@
         textarea { resize: vertical; }
         textarea:focus, select:focus { border-color: var(--primary); background: var(--panel); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
         
-        .night-rules { color: #64748b; line-height: 1.8; background: var(--bg); padding: 15px; border-radius: 8px; margin-bottom: 15px; }
         .cfg-textarea { background: #1e293b; color: #38bdf8; font-family: monospace; border: none; }
         .dlg-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
         
@@ -116,7 +100,6 @@
         .q-chk { margin-right: 12px; cursor: pointer; transform: scale(1.3); accent-color: var(--primary); }
         .batch-controls { display: flex; align-items: center; gap: 10px; margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--border); }
         textarea:disabled { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; font-weight: bold; border-style: dashed; }
-        body.night-mode textarea:disabled { background: #1e293b; color: #64748b; }
         
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     </style>
@@ -135,7 +118,6 @@
         </div>
         <div class="flex-row-sm">
             <button class="btn" onclick="getE('dlg-cfg').showModal()">⚙️ 配置中心</button>
-            <button class="btn btn-night" id="btn-night-entry" onclick="getE('dlg-night').showModal()">🌙 夜间挂机</button>
         </div>
     </header>
 
@@ -161,13 +143,6 @@
             </div>
 
             <div id="q-list" class="queue-list"></div>
-
-            <div id="night-view" class="night-overlay hidden">
-                <div class="night-icon">☁️</div>
-                <div class="night-title">夜间云端接管中</div>
-                <p class="night-desc">所有任务已由云端 Excel 托管，人工微操已锁定</p>
-                <button class="btn btn-danger night-stop-btn" onclick="stopNight()">🛑 终止夜间模式并切回日间</button>
-            </div>
         </section>
 
         <section class="term-pane">
@@ -226,29 +201,12 @@
         </div>
     </dialog>
 
-    <dialog id="dlg-night">
-        <div class="dlg-title">🌙 启动夜间无人值守</div>
-        <p class="night-rules">
-            <b>执行规范：</b><br>
-            1. 将强制清空当前大厅残留的日间任务。<br>
-            2. 自动拉取云端 Excel 任务进行死磕。<br>
-            3. 触发连续失败将自动进入休眠保护。
-        </p>
-        <div class="dlg-footer">
-            <button class="btn" onclick="this.closest('dialog').close()">取消</button>
-            <button class="btn btn-night" onclick="submitNight()">▶️ 确认启动</button>
-        </div>
-    </dialog>
-
     <dialog id="dlg-cfg">
         <div class="dlg-title">⚙️ 系统全局配置</div>
         <textarea id="cfg-text" rows="18" class="cfg-textarea" spellcheck="false">{{ config_str }}</textarea>
-        <div class="dlg-footer" style="justify-content:space-between;">
-            <button class="btn" onclick="syncCloud()">☁️ 从云端同步最新参数</button>
-            <div class="flex-row-sm">
-                <button class="btn" onclick="this.closest('dialog').close()">关闭</button>
-                <button class="btn btn-success" onclick="saveCfg()">💾 保存生效</button>
-            </div>
+        <div class="dlg-footer" style="justify-content:flex-end;">
+            <button class="btn" onclick="this.closest('dialog').close()">关闭</button>
+            <button class="btn btn-success" onclick="saveCfg()">💾 保存生效</button>
         </div>
     </dialog>
 
@@ -267,41 +225,31 @@
             try {
                 const [s, q] = await Promise.all([fetch('/api/status').then(r=>r.json()), fetch('/api/queue').then(r=>r.json())]);
                 currentQueue = q.pending || [];
-                
-                // 🚀 核心：切换暗黑夜间视觉
-                const isNight = s.current_mode === "night";
-                document.body.classList.toggle('night-mode', isNight);
-                getE('day-controls').classList.toggle('hidden', isNight);
-                getE('q-list').classList.toggle('hidden', isNight);
-                getE('night-view').classList.toggle('hidden', !isNight);
-                getE('btn-night-entry').classList.toggle('hidden', isNight);
 
                 // 渲染横幅
                 const rb = getE('run-banner');
                 if (s.is_running && q.current_task) {
-                    getE('run-icon').innerText = isNight ? "🌙" : "🏃";
+                    getE('run-icon').innerText = "🏃";
                     getE('run-icon').style.animation = "pulse 1.5s infinite";
-                    getE('run-text').innerText = (isNight ? "[夜间接管] " : "正在执行: ") + q.current_task;
+                    getE('run-text').innerText = "正在执行: " + q.current_task;
                 } else {
                     getE('run-icon').innerText = "💤"; getE('run-icon').style.animation = "none";
                     getE('run-text').innerText = s.is_running ? "引擎已启动，等待喂食..." : "暂无执行任务";
                 }
 
-                // 渲染流水线列表 (仅白天)
-                if(!isNight) {
-                    getE('q-list').innerHTML = currentQueue.length ? currentQueue.map((t, i) => `
-                        <div class="queue-item" onclick="toggleSelect('${t.task_name}', !event.currentTarget.querySelector('.q-chk').checked)">
-                            <input type="checkbox" class="q-chk" value="${t.task_name}" ${selectedTaskIds.has(t.task_name) ? 'checked' : ''} onclick="event.stopPropagation(); toggleSelect('${t.task_name}', this.checked)">
-                            <span class="q-idx">${i+1}.</span>
-                            ${t.image_path ? `<img src="/assets/references/${t.image_path.split(/[\\/]/).pop()}" class="q-img">` : '<div class="q-img-txt">TXT</div>'}
-                            <span class="q-text" title="${t.prompt}">${t.prompt}</span>
-                            <div class="q-actions">
-                                <button class="btn q-btn-edit" style="color:#0ea5e9" onclick="moveToTop('${t.task_name}')">⬆️ 置顶</button>
-                                <button class="btn q-btn-edit" onclick="recallTask('${t.task_name}')">✏️ 修改</button>
-                                <button class="btn q-btn-rm" onclick="rmTask('${t.task_name}')">❌ 撤单</button>
-                            </div>
-                        </div>`).join('') : '<div class="queue-empty">📭 大厅空空如也，点击【新建任务】发车</div>';
-                }
+                // 渲染流水线列表
+                getE('q-list').innerHTML = currentQueue.length ? currentQueue.map((t, i) => `
+                    <div class="queue-item" onclick="toggleSelect('${t.task_name}', !event.currentTarget.querySelector('.q-chk').checked)">
+                        <input type="checkbox" class="q-chk" value="${t.task_name}" ${selectedTaskIds.has(t.task_name) ? 'checked' : ''} onclick="event.stopPropagation(); toggleSelect('${t.task_name}', this.checked)">
+                        <span class="q-idx">${i+1}.</span>
+                        ${t.image_path ? `<img src="/assets/references/${t.image_path.split(/[\\/]/).pop()}" class="q-img">` : '<div class="q-img-txt">TXT</div>'}
+                        <span class="q-text" title="${t.prompt}">${t.prompt}</span>
+                        <div class="q-actions">
+                            <button class="btn q-btn-edit" style="color:#0ea5e9" onclick="moveToTop('${t.task_name}')">⬆️ 置顶</button>
+                            <button class="btn q-btn-edit" onclick="recallTask('${t.task_name}')">✏️ 修改</button>
+                            <button class="btn q-btn-rm" onclick="rmTask('${t.task_name}')">❌ 撤单</button>
+                        </div>
+                    </div>`).join('') : '<div class="queue-empty">📭 大厅空空如也，点击【新建任务】发车</div>';
             } catch(e){}
         }
 
@@ -433,14 +381,6 @@
             } 
         }
 
-        async function submitNight() {
-            await fetchAPI('/api/clear_queue', null, true); // 夜间启动前静默清场
-            const res = await fetchAPI('/api/start_night_mode', {engine: engine()});
-            if(res && res.status==='success') getE('dlg-night').close();
-        }
-
-        async function stopNight() { if(confirm("确定终止夜间模式？")) fetchAPI('/api/stop'); }
-
         // --- 🖼️ 图库与拖拽填装 ---
         async function fetchGallery() {
             const r = await (await fetch('/api/images')).json();
@@ -473,12 +413,6 @@
 
         // --- ⚙️ 配置中心 ---
         async function saveCfg() { await fetchAPI('/api/save_config', JSON.parse(getE('cfg-text').value)); alert("保存成功"); getE('dlg-cfg').close(); }
-        async function syncCloud() {
-            const btn = event.target; btn.innerText = "同步中...";
-            const res = await fetchAPI('/api/sync_cloud_config', {engine: engine()});
-            if(res && res.status==='success') getE('cfg-text').value = JSON.stringify(res.new_config, null, 4);
-            btn.innerText = "☁️ 从云端同步最新参数";
-        }
 
         // --- 💻 底层终端 ---
         function connectWS() {

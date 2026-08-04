@@ -8,18 +8,20 @@
 
 一个 **Python + Playwright + FastAPI** 的多平台 AI 绘画自动化控制中心。它通过 CDP 协议接管本机 Chrome，在真实浏览器里自动完成：新建项目 → 切换模式 → 配置参数 → 上传垫图 → 输入提示词 → 发送 → 收割图片 → 打标投递 Eagle 的完整流水线。
 
-### 核心目录（已整理）
+> 📌 **当前架构状态（2026-08 重构后）**：仅保留**白天模式**单一执行链路（`start_day_queue` → `_run_wrapper`）。**云端同步与夜间模式已彻底废除**，`config.json` 是唯一数据源。
+
+### 核心目录
 ```
-G:\AutoAI_01\
+<项目根>/
 ├── core/          # 🧠 调度中枢（server/task_runner/ledger/image_processor）
 ├── plugins/       # ⚔️ 正式引擎（base + flow/jimeng/lovart/doubao）—— 核心战场
 ├── templates/     # 🖥️ 前端控制台（index.html，被 FastAPI 按目录引用，勿移）
 ├── tools/         # 🛠️ 辅助工具（DOM 抓取工具、engine_ide、旧版备份、标准化模版）
 ├── docs/          # 📄 经验文档（抓包经验总结、总结方法、怎么打包）
-├── assets/        # 垫图资源
+├── assets/        # 垫图资源（references/ 为参考垫图，前端图库读取）
 ├── Downloads/     # 产图输出
 ├── logs/          # 运行日志
-├── config.json    # 站点配置（含云控 Excel 地址）
+├── config.json    # ☝️ 唯一数据源（global_settings 全局配置 + sites 引擎参数）
 ├── history.db     # 记账（防重复跑图）
 ├── main.py        # 入口
 └── 启动控制台.bat / .ps1 / .command  # 启动脚本
@@ -32,6 +34,12 @@ G:\AutoAI_01\
 - `plugins/base_engine.py`：**统帅底盘**，跨平台通用逻辑（CDP 连接、HIL 极简交互层 `_click`/`_fill`/`_hover`、通用下载器、WAF 逃逸、`_smart_upload` 垫图引擎、`_set_params_iteratively` 参数装填、`_security_check` 安检）
 - `plugins/{flow,jimeng,lovart,doubao}_engine.py`：**平台专属适配器**，只写该平台的 DOM 选择器和专属交互流程
 - 引擎的 `process_single(payload)` 是主流程入口，子类实现 `action_init_workspace` / `action_upload_image` / `action_fill_and_submit` / `action_wait_and_download` 四个钩子
+
+### ☝️ 单一数据源（最高准则）
+> **`config.json` 是唯一真相源**。所有全局运行参数（Chrome 路径/端口、代理、Clash、输出目录、图片黑名单、熔断参数）统一放 `global_settings` 段，引擎在 `base_engine.py` 的 `_load_global_config()` 装载为实例属性。**已彻底废除云端同步与夜间模式**，不要再引入任何"云端 Excel / 云控表覆盖本地参数"的逻辑。
+- 优先级：`config.json > base_engine.py` 里的 `GLOBAL_*` 硬编码默认值（后者仅作缺省兜底，向后兼容）。
+- 改全局配置 = 改 `config.json`，改完即生效；**不要**在代码里新写死全局常量。
+- 站点引擎参数放 `sites.<site_name>` 段（当前为空对象，保留结构以便扩展）。
 
 ---
 
@@ -255,7 +263,7 @@ Windows 下让工具输出 UTF-8 中文不乱码。`webctl.py`/`dom_sniffer.py` 
 ### 铁律 4：出图用"SRC 集合差集"，别数 DOM 节点
 - 现代框架先渲染 Base64 骨架屏占位，`locator.count()` 增加可能是假图
 - **正确做法**：初始提取所有真实 `http` URL 存 `Set A`；出图后提取存 `Set B`；`Set B - Set A` 剩下的才是真图
-- 配合黑名单正则过滤：`(base64|loading|placeholder|/user/|/upload/)`，只认 `/generator/` 等真图路径
+- 配合黑名单正则过滤（项目实现在 `base_engine.py` 的 `_extract_valid_image_url`，正则可在 `config.json → global_settings.image_blacklist` 调）：`(base64|blob:|loading|placeholder|spinner|/user/|/upload/|/reference/|/source/|/input/)`，只认 `/generator/` 等真图路径
 
 ### 铁律 5：幽灵标签页，追踪导弹式接管
 - CDP 接管时 `context.pages[-1]` 可能拿到扩展隐藏页/空白页
@@ -300,18 +308,27 @@ Windows 下让工具输出 UTF-8 中文不乱码。`webctl.py`/`dom_sniffer.py` 
 ```bash
 # Windows
 启动控制台.bat
-# 或直接
-venv\Scripts\activate && python main.py
+
+# macOS
+./启动控制台.command        # 或直接
+python3 main.py
+
+# 或直接（通用）
+python3 main.py
 ```
+- **必须用 `python3`，不要用 `python`**：系统默认 `python` 可能是 Python 2.7，会导致类型注解/TypedDict 编译失败。
 - 控制台：http://127.0.0.1:8000
 - 日志实时推送到前端终端，也落在 `logs/sys_logs.log`
 - 测试出问题时，把**报错日志**和**DOM 情报**一起贴给 AI，不要只贴报错
+- 若在 Mac 上运行：Chrome 路径、调试端口等由 `config.json → global_settings.chrome` 控制（默认 `debug_port: 9222`）。
 
 ---
 
 ## 七、快速自查清单（改引擎代码前过一遍）
 - [ ] 选择器是基于真实抓取的 DOM 吗？还是我编的？
 - [ ] 要改的是**代码逻辑**还是**选择器**？代码逻辑必须确认。
+- [ ] 全局参数有没有写死？**应放 `config.json → global_settings`，由 `_load_global_config()` 读**。
+- [ ] 有没有引入云端同步/夜间模式？**这两者已彻底废除，不要再加回来**。
 - [ ] 输入框处理用了物理键盘降级吗？
 - [ ] 展开面板后记得 Esc + 盲点破盾吗？
 - [ ] 出图判定用了 SRC 差集 + 黑名单过滤吗？

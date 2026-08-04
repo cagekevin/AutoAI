@@ -6,7 +6,6 @@ import os
 import re
 import hashlib
 import time
-import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
 from core.image_processor import processor 
@@ -101,77 +100,6 @@ class TaskRunner:
             })
         return standardized
 
-    def _prepare_night_tasks(self, mode_cfg):
-        """夜间版洗菜机：全面接管 Excel 读取与 DNA 匹配"""
-        logging.info("☁️ [调度中心] 正在从云端拉取 Excel 超级数据包...")
-        try:
-            all_sheets = pd.read_excel(mode_cfg.get("data_source_url"), sheet_name=None)
-            df_tasks = all_sheets.get('提示词输出', pd.DataFrame()).fillna('')
-            df_presets = all_sheets.get('Presets_Vault', pd.DataFrame()).fillna('')
-            if df_tasks.empty:
-                raise Exception("找不到名为 '提示词输出' 的工作表！请检查表格名称。")
-        except Exception as e:
-            raise Exception(f"云端读取失败: {e}")
-
-        inject_dna = mode_cfg.get("inject_dna", False)
-        
-        if inject_dna:
-            df_core = all_sheets.get('Dict_Core', pd.DataFrame()).fillna('')
-            df_motion = all_sheets.get('Dict_Motion', pd.DataFrame()).fillna('')
-            dict_df = pd.concat([df_core, df_motion], ignore_index=True)
-        else:
-            dict_df = pd.DataFrame()
-
-        standardized = []
-        
-        for _, row in df_tasks.iterrows():
-            prompt = str(row.get('图片提示词', '')).strip()
-            if not prompt: continue
-                
-            raw_task_name = str(row.get('预设名称', '')).strip()
-            if not raw_task_name or raw_task_name.lower() == "nan":
-                raw_task_name = "Task_" + hashlib.md5(prompt.encode('utf-8')).hexdigest()[:8]
-            task_name = re.sub(r'[\\/*?:"<>|]', "_", raw_task_name)
-
-            dna_data = {}
-            if inject_dna:
-                preset_vault_info = {}
-                if not df_presets.empty and raw_task_name:
-                    match = df_presets[df_presets['预设名称'] == raw_task_name]
-                    if not match.empty:
-                        preset_vault_info = {str(k): str(v) for k, v in match.iloc[0].to_dict().items() if str(v).strip()}
-                
-                matched_tags = []
-                if not dict_df.empty:
-                    for _, d_row in dict_df.iterrows():
-                        en_prompt = next((str(v) for k, v in d_row.items() if "英文" in str(k) or "Prompt" in str(k)), "")
-                        if en_prompt and en_prompt.lower() in prompt.lower():
-                            matched_tags.append({str(k): str(v) for k, v in d_row.items() if str(v).strip()})
-                
-                dna_data = {
-                    "Metadata": {"Preset_Name": raw_task_name, "Preset_Group": str(row.get('预设分组', '')), "Image_Prompt": prompt, "Video_Prompt": str(row.get('视频提示词', ''))},
-                    "Vault_L_Structure": preset_vault_info,
-                    "Deep_Dictionary": matched_tags
-                }
-
-            # 🌟 核心升级：从 Excel 提取比例列，并注入站点契约解决 Unknown 路径问题
-            excel_ratio = str(row.get('画面比例', '')).strip() or "9:16"
-            
-            standardized.append({
-                "task_name": task_name, 
-                "prompt": prompt, 
-                "image_path": os.path.abspath(os.path.join("assets", "references", str(row.get('图片路径', '')).strip())) if str(row.get('图片路径', '')).strip() else "", 
-                "dna_dict": dna_data,
-                "target_site": site_name,  # 🌟 必须注入，否则父类下载器找不到对应目录
-                "engine_params": {
-                    "aspect_ratio": excel_ratio,
-                    "burst_count": 8
-                }
-            })
-            
-        logging.info(f"✅ [调度中心] 核心数据清洗完毕: 成功解析 {len(standardized)} 条标准流水线任务！")
-        return standardized
-
     # ================= 🚀 动态队列核心操作 =================
     
     def start_day_queue(self, prompts, site_name=None, image_name="", aspect_ratio="", inject_dna=True, auto_start=True):
@@ -253,18 +181,6 @@ class TaskRunner:
             status = "⏸️ 阀门已关：流水线进入柔性暂停（当前图跑完后原地待命）" if self.soft_paused else "▶️ 阀门已开：柔性暂停解除，流水线继续狂奔！"
             return True, status
 
-    def start_task(self, site_name, mode, **kwargs):
-        """挂机启动方式（极简互斥版：运行中绝对禁止新模式启动）"""
-        with self.lock:
-            if self.is_running:
-                return False, "⚠️ 拦截：当前已有任务正在运行中！请先点击【🛑 停止】清场后，再启动新模式。"
-            
-            self.is_running = True
-            self.current_mode = mode   
-            
-        self.executor.submit(self._run_wrapper, site_name, mode, **kwargs)
-        return True, f"✅ 任务已推入执行舱 ({site_name} - {mode}模式)"
-
     # ================= 🚀 终极调度中枢与通用熔断器 =================
 
     def _run_wrapper(self, site_name, mode, **kwargs):
@@ -279,19 +195,8 @@ class TaskRunner:
                 return
                 
             global_cfg = config.get("global_settings", {})
-            engine_cfg = config.get("sites", {}).get(site_name, {})
-            mode_cfg = engine_cfg.get(f"{mode}_mode", {})
 
-            # 🛠️ 1. 夜间模式数据灌入大一统队列
-            if mode == "night":
-                night_tasks = self._prepare_night_tasks(mode_cfg)
-                with self.lock:
-                    # 🪓 柔性追加：绝不清空白天的残留任务，老老实实排在后面！
-                    self.day_queue.extend(night_tasks)
-                    self.total_count += len(night_tasks)
-                    self._save_queue_to_disk()  # 💾 自动存档
-
-            # 🛠️ 2. 挂载引擎模块
+            # 🛠️ 1. 挂载引擎模块
             module_name = f"plugins.{site_name}_engine"
             plugin_module = importlib.import_module(module_name)
             
@@ -333,12 +238,6 @@ class TaskRunner:
                     
                     current_idx = self.total_count - len(self.day_queue)
                     logging.info(f"📊 进度: {current_idx}/{self.total_count}")
-                    
-                if mode == "night":
-                    is_done, who_did_it = ledger.check_task_completed(current_task_data.get("prompt"), current_task_data.get("image_path"))
-                    if is_done:
-                        logging.info(f"⏭️ [智能拦截] 账本核实该任务已由 [{who_did_it}] 完成，直接跳过！")
-                        continue 
 
                 logging.info(f"🎯 [中枢分发] 提取任务: {self.current_task}")
 
@@ -379,7 +278,7 @@ class TaskRunner:
                     except Exception as td_err:
                         logging.error(f"⚠️ [强制清理] 清理残留进程时遇到阻碍 (可忽略): {td_err}")
 
-                    meltdown_cfg = mode_cfg.get("meltdown_protection", {})
+                    meltdown_cfg = global_cfg.get("meltdown_protection", {})
                     max_fails = meltdown_cfg.get("meltdown_failures", 3)
                     sleep_secs = meltdown_cfg.get("meltdown_sleep_seconds", 600)
 
@@ -438,74 +337,5 @@ class TaskRunner:
                 self.current_engine.resume_event.set()
                 return True, "▶️ 已发送放行指令，流水线开始狂奔！"
             return False, "引擎不支持手动放行。"
-
-    def sync_cloud_config(self, engine_name):
-        """真正的云控核心：拉取表格 Cloud_Config 页的键值对，热更新本地 JSON"""
-        with self.lock:
-            try:
-                logging.info(f"☁️ [云控中心] 正在连接云端表格，拉取 [{engine_name}] 的最新配置...")
-                
-                local_config = self.load_config()
-                url = local_config.get("sites", {}).get(engine_name, {}).get("night_mode", {}).get("data_source_url", "")
-                
-                if not url:
-                    return False, local_config, "❌ 同步失败：本地未配置该引擎的数据源 URL！"
-
-                all_sheets = pd.read_excel(url, sheet_name=None)
-                if not all_sheets:
-                    return False, local_config, "❌ 同步失败：云端表格内容为空！"
-
-                df_config = all_sheets.get("Cloud_Config")
-                if df_config is None or df_config.empty:
-                    return False, local_config, "❌ 同步失败：未找到名为 'Cloud_Config' 的工作表！"
-                    
-                df_config = df_config.fillna('')
-                logging.info(f"📄 成功锁定云控表: [Cloud_Config]，正在执行参数热覆写...")
-
-                engine_config = local_config.setdefault("sites", {}).setdefault(engine_name, {})
-
-                def parse_value(val):
-                    if isinstance(val, bool): return val
-                    if isinstance(val, (int, float)): 
-                        return int(val) if val == int(val) else val
-                    
-                    val_str = str(val).strip()
-                    if not val_str: return val_str
-                    if val_str.upper() == 'TRUE': return True
-                    if val_str.upper() == 'FALSE': return False
-                    if val_str.isdigit(): return int(val_str)
-                    
-                    if ',' in val_str: 
-                        return [x.strip() for x in val_str.split(',') if x.strip()]
-                    return val_str
-
-                for _, row in df_config.iterrows():
-                    key_path = str(row.iloc[0]).strip()
-                    raw_value = row.iloc[1]
-                    
-                    if not key_path or key_path == "参数名 (配置键)" or key_path.startswith("#"):
-                        continue
-                        
-                    parsed_value = parse_value(raw_value)
-                    
-                    keys = key_path.split('.')
-                    if keys[0] == "global_settings":
-                        target_dict = local_config 
-                    else:
-                        target_dict = engine_config 
-                        
-                    for key in keys[:-1]:
-                        target_dict = target_dict.setdefault(key, {})
-                    target_dict[keys[-1]] = parsed_value
-
-                with open("config.json", "w", encoding="utf-8") as f:
-                    json.dump(local_config, f, indent=4, ensure_ascii=False)
-                    
-                logging.info(f"✅ [云控中心] 本地配置已被云端参数成功覆写！")
-                return True, local_config, "✅ 云端配置已成功同步并覆盖本地！"
-
-            except Exception as e:
-                logging.error(f"❌ [云控中心] 同步致命异常: {e}")
-                return False, self.load_config(), f"同步失败: {str(e)}"
 
 runner = TaskRunner()

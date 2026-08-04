@@ -16,9 +16,9 @@ from playwright.sync_api import sync_playwright
 from core.image_processor import processor 
 
 # =====================================================================
-# [全局硬编码区]: 彻底废弃 config.json，单一真相源在此汇聚
+# [全局配置区]: 默认值兜底，单一真相源 = config.json(global_settings) > 此处硬编码
 # =====================================================================
-# 跨平台 Chrome 浏览器可执行文件路径映射表
+# 跨平台 Chrome 浏览器可执行文件路径映射表（可被 config.json 覆盖）
 GLOBAL_CHROME_PATHS = {
     "darwin": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "windows": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
@@ -67,6 +67,46 @@ class BaseAIEngine:
         self.browser = None                  # Chromium 浏览器连接对象
         self.context = None                  # 浏览器上下文（含 Cookie/Storage）
         self.page = None                     # 当前工作标签页
+
+        # ================== [全局配置装载] ==================
+        # 单一真相源: config.json -> global_settings，缺省时回落硬编码默认值
+        self._load_global_config()
+
+    def _load_global_config(self):
+        """
+        🎯 从 config.json 的 global_settings 段装载全局运行参数。
+        优先级: config.json > 模块级硬编码默认值 (GLOBAL_*)。
+        JSON 是唯一真相源，用户改 config.json 即全局生效。
+        """
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            gs = cfg.get("global_settings", {}) or {}
+        except Exception:
+            gs = {}
+
+        # Chrome 相关
+        chrome_cfg = gs.get("chrome", {}) or {}
+        self.chrome_paths = dict(GLOBAL_CHROME_PATHS)
+        if chrome_cfg.get("path_darwin"):
+            self.chrome_paths["darwin"] = chrome_cfg["path_darwin"]
+        if chrome_cfg.get("path_windows"):
+            self.chrome_paths["windows"] = chrome_cfg["path_windows"]
+        self.user_data_dir = chrome_cfg.get("user_data_dir", GLOBAL_USER_DATA_DIR)
+        self.debug_port = int(chrome_cfg.get("debug_port", 9222))
+
+        # 网络 / 代理 / Clash
+        net_cfg = gs.get("network", {}) or {}
+        self.proxy_server = net_cfg.get("proxy_server", GLOBAL_PROXY)
+        self.clash_api = net_cfg.get("clash_api", GLOBAL_CLASH_API)
+        self.clash_auth = net_cfg.get("clash_auth", GLOBAL_CLASH_AUTH)
+
+        # 输出目录
+        out_cfg = gs.get("output", {}) or {}
+        self.output_dir = out_cfg.get("dir", GLOBAL_OUTPUT_DIR)
+
+        # 无效图片黑名单
+        self.image_blacklist_regex = gs.get("image_blacklist", GLOBAL_IMAGE_BLACKLIST_REGEX)
 
     def _log(self, msg: str):
         """统一日志输出通道：同时打印至控制台并写入 logging 模块"""
@@ -307,7 +347,7 @@ class BaseAIEngine:
             src = img_node.evaluate("el => el.src || el.getAttribute('data-src')") or ""
             
             # 核心过滤：必须是 http 开头，且绝对不能命中全局黑名单
-            if src and src.startswith('http') and not re.search(GLOBAL_IMAGE_BLACKLIST_REGEX, src, re.I):
+            if src and src.startswith('http') and not re.search(self.image_blacklist_regex, src, re.I):
                 return src
                 
         return None
@@ -343,23 +383,25 @@ class BaseAIEngine:
     def setup(self):
         self.stop_requested = False  
         sys_os = platform.system().lower()
-        chrome_path = GLOBAL_CHROME_PATHS.get(sys_os, "")
-        abs_profile = os.path.abspath(GLOBAL_USER_DATA_DIR) if GLOBAL_USER_DATA_DIR else ""
+        # 🎯 单一真相源：优先读实例属性 (来自 config.json -> global_settings)，缺省回落默认值
+        chrome_path = self.chrome_paths.get(sys_os, "")
+        abs_profile = os.path.abspath(self.user_data_dir) if self.user_data_dir else ""
+        debug_port = self.debug_port
         
-        args = f'--remote-debugging-port=9222 --user-data-dir="{abs_profile}"'
-        if GLOBAL_PROXY: args += f' --proxy-server={GLOBAL_PROXY}'
+        args = f'--remote-debugging-port={debug_port} --user-data-dir="{abs_profile}"'
+        if self.proxy_server: args += f' --proxy-server={self.proxy_server}'
 
         if chrome_path:
             import socket
             port_in_use = False
             try:
-                with socket.create_connection(("127.0.0.1", 9222), timeout=1):
+                with socket.create_connection(("127.0.0.1", debug_port), timeout=1):
                     port_in_use = True
             except OSError:
                 pass
 
             if port_in_use:
-                self._log("   -> ♻️ 进程防碰撞拦截：Chrome (9222) 稳固运行中，直接复用。")
+                self._log(f"   -> ♻️ 进程防碰撞拦截：Chrome ({debug_port}) 稳固运行中，直接复用。")
             else:
                 try:
                     self._log(f"🚀 [底盘点火] 拉起独立 Chrome...")
@@ -372,8 +414,8 @@ class BaseAIEngine:
         max_retries = 15
         for i in range(max_retries):
             try:
-                self.browser = self.playwright.chromium.connect_over_cdp("http://127.0.0.1:9222", timeout=5000)
-                self._log("   -> 🟢 CDP 底层调试接口已连通！")
+                self.browser = self.playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{debug_port}", timeout=5000)
+                self._log(f"   -> 🟢 CDP 底层调试接口已连通！(端口 {debug_port})")
                 break
             except Exception as e:
                 if i == max_retries - 1:
@@ -430,7 +472,7 @@ class BaseAIEngine:
 
     def _get_download_dir(self, payload: TaskPayload) -> str:
         site_name = payload.get("target_site", "Unknown").capitalize()
-        out_dir = os.path.join(GLOBAL_OUTPUT_DIR, f"{site_name}_Downloads", datetime.now().strftime("%Y-%m-%d"))
+        out_dir = os.path.join(self.output_dir, f"{site_name}_Downloads", datetime.now().strftime("%Y-%m-%d"))
         os.makedirs(out_dir, exist_ok=True)
         return out_dir
 
@@ -497,11 +539,11 @@ class BaseAIEngine:
             return False  
 
     def _escape_waf_via_clash(self) -> bool:
-        if not GLOBAL_CLASH_API: return False  
+        if not self.clash_api: return False  
         try:
-            headers = {"Authorization": GLOBAL_CLASH_AUTH} if GLOBAL_CLASH_AUTH else {}
+            headers = {"Authorization": self.clash_auth} if self.clash_auth else {}
             
-            req = urllib.request.Request(f"{GLOBAL_CLASH_API}/proxies", headers=headers)
+            req = urllib.request.Request(f"{self.clash_api}/proxies", headers=headers)
             data = json.loads(urllib.request.urlopen(req, timeout=3).read().decode('utf-8'))
             
             proxies_data = data.get('proxies', {})
@@ -528,7 +570,7 @@ class BaseAIEngine:
             if escape_nodes:
                 next_node = random.choice(escape_nodes)  
                 switch_req = urllib.request.Request(
-                    f"{GLOBAL_CLASH_API}/proxies/{urllib.parse.quote(target_group)}", 
+                    f"{self.clash_api}/proxies/{urllib.parse.quote(target_group)}", 
                     data=json.dumps({"name": next_node}).encode('utf-8'), 
                     headers=headers, method='PUT'
                 )

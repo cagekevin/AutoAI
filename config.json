@@ -1,44 +1,29 @@
 {
-    "sites": {
-        "flow": {
-            "night_mode": {
-                "data_source_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vR7FbDUYnQY_eA3aCzkfPJHmr8pvwalu0uSd2lsoGFiyCcYDqHREtXsWVQmoQmZS5j-bGGQE5sa1xQ4/pub?output=xlsx",
-                "inject_dna": true,
-                "meltdown_protection": {
-                    "meltdown_failures": 5,
-                    "meltdown_sleep_seconds": 1800
-                }
-            }
+    "global_settings": {
+        "chrome": {
+            "path_darwin": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "path_windows": "C:\\Program Files\\Google Chrome\\Application\\chrome.exe",
+            "user_data_dir": "./google_chrome_profile",
+            "debug_port": 9222
         },
-        "jimeng": {
-            "night_mode": {
-                "data_source_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vR7FbDUYnQY_eA3aCzkfPJHmr8pvwalu0uSd2lsoGFiyCcYDqHREtXsWVQmoQmZS5j-bGGQE5sa1xQ4/pub?output=xlsx",
-                "inject_dna": true,
-                "meltdown_protection": {
-                    "meltdown_failures": 5,
-                    "meltdown_sleep_seconds": 1800
-                }
-            }
+        "network": {
+            "proxy_server": "http://127.0.0.1:7897",
+            "clash_api": "http://127.0.0.1:9097",
+            "clash_auth": "Bearer set-your-secret"
         },
-        "doubao": {
-            "night_mode": {
-                "data_source_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vR7FbDUYnQY_eA3aCzkfPJHmr8pvwalu0uSd2lsoGFiyCcYDqHREtXsWVQmoQmZS5j-bGGQE5sa1xQ4/pub?output=xlsx",
-                "inject_dna": true,
-                "meltdown_protection": {
-                    "meltdown_failures": 5,
-                    "meltdown_sleep_seconds": 1800
-                }
-            }
+        "output": {
+            "dir": "Downloads"
         },
-        "lovart": {
-            "night_mode": {
-                "data_source_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vR7FbDUYnQY_eA3aCzkfPJHmr8pvwalu0uSd2lsoGFiyCcYDqHREtXsWVQmoQmZS5j-bGGQE5sa1xQ4/pub?output=xlsx",
-                "inject_dna": true,
-                "meltdown_protection": {
-                    "meltdown_failures": 5,
-                    "meltdown_sleep_seconds": 1800
-                }
-            }
+        "image_blacklist": "base64|blob:|loading|placeholder|spinner|/user/|/upload/|/reference/|/source/|/input/",
+        "meltdown_protection": {
+            "meltdown_failures": 5,
+            "meltdown_sleep_seconds": 1800
         }
+    },
+    "sites": {
+        "flow": {},
+        "jimeng": {},
+        "doubao": {},
+        "lovart": {}
     }
 }

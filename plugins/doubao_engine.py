@@ -53,7 +53,7 @@ class DoubaoEngine(BaseAIEngine):
                 time.sleep(1)
         except: pass
 
-self._log("   -> 🎛️ 正在精准锚定豆包【图像生成】模式...")
+        self._log("   -> 🎛️ 正在精准锚定豆包【图像生成】模式...")
         
         # 🎯 暴力防御：前置无脑按 ESC，强制关掉上一轮可能被误触打开的预览大图
         try:

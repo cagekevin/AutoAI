@@ -76,9 +76,6 @@ class DayModeRequest(BaseModel):
 class RemoveTaskRequest(BaseModel):
     task_name: str
 
-class SyncRequest(BaseModel):
-    engine: str
-
 class TaskActionRequest(BaseModel):
     task_name: str
 
@@ -132,11 +129,6 @@ def clear_queue():
     success, msg = runner.clear_all_queue()
     return {"status": "success" if success else "error", "msg": msg}
 
-@app.post("/api/start_night_mode")
-async def start_night(data: dict):
-    success, msg = runner.start_task(data.get("engine"), "night")
-    return {"status": "success" if success else "error", "msg": msg}
-
 @app.post("/api/stop")
 async def stop_all():
     success, msg = runner.stop_task()
@@ -171,15 +163,6 @@ async def save_config(new_config: dict):
         return {"status": "success", "msg": "配置保存成功！"}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
-
-@app.post("/api/sync_cloud_config")
-async def sync_cloud(req: SyncRequest):
-    if hasattr(runner, 'sync_cloud_config'):
-        success, new_cfg, msg = runner.sync_cloud_config(req.engine)
-        if success:
-            return {"status": "success", "new_config": new_cfg, "msg": msg}
-        return {"status": "error", "msg": msg}
-    return {"status": "error", "msg": "调度器暂不支持云端同步功能"}
 
 @app.websocket("/ws/logs")
 async def websocket_endpoint(websocket: WebSocket):
