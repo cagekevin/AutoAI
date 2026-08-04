@@ -55,7 +55,10 @@ class WebCtl:
             self.pw = sync_playwright().start()
         self.browser = self.pw.chromium.connect_over_cdp(CDP_URL)
         self._pick_page()
-        print(f"✅ 已连接 9222 浏览器，当前页面: {self.page.url}")
+        if not self.page:
+            print("✅ 已连接 9222 浏览器，但未找到可用的 http 页面。可先导航或在浏览器打开网站。")
+        else:
+            print(f"✅ 已连接 9222 浏览器，当前页面: {self.page.url}")
         return True
 
     def _pick_page(self):
@@ -260,6 +263,22 @@ class WebCtl:
         "help": "cmd_help", "quit": "cmd_quit", "exit": "cmd_quit",
     }
 
+    def exec_line(self, line):
+        """执行单条命令字符串（REPL 与 --run 共用）。"""
+        line = line.strip()
+        if not line:
+            return
+        parts = line.split()
+        cmd, args = parts[0].lower(), parts[1:]
+        mname = self.CMD.get(cmd)
+        if not mname:
+            print(f"未知命令: {cmd}（输入 help 查看）")
+            return
+        try:
+            getattr(self, mname)(args)
+        except Exception as e:
+            print(f"❌ {cmd} 执行异常: {str(e)[:120]}")
+
     def run(self):
         self.cmd_help([])
         while True:
@@ -269,19 +288,7 @@ class WebCtl:
                 self.close()
                 print("\n再见。")
                 break
-            if not raw:
-                continue
-            parts = raw.split()
-            cmd, args = parts[0].lower(), parts[1:]
-            mname = self.CMD.get(cmd)
-            if not mname:
-                print(f"未知命令: {cmd}（输入 help 查看）")
-                continue
-            fn = getattr(self, mname)
-            try:
-                fn(args)
-            except Exception as e:
-                print(f"❌ 命令执行异常: {str(e)[:120]}")
+            self.exec_line(raw)
 
 
 def main():
@@ -293,7 +300,7 @@ def main():
     ctl = WebCtl()
     try:
         ctl.open()
-        if args.url:
+        if args.url and ctl.page:
             ctl.page.goto(args.url, timeout=60000)
             time.sleep(2)
             print(f"已导航到: {ctl.page.url}")
@@ -303,20 +310,9 @@ def main():
         return 1
 
     if args.run:
-        # 非交互：一次性执行命令序列
+        # 非交互：一次性执行命令序列（与 run() 共用 exec_line 逻辑）
         for line in args.run.split("|"):
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split()
-            mname = ctl.CMD.get(parts[0].lower())
-            if not mname:
-                print(f"未知命令: {parts[0]}")
-                continue
-            try:
-                getattr(ctl, mname)(parts[1:])
-            except Exception as e:
-                print(f"❌ {parts[0]} 执行异常: {str(e)[:120]}")
+            ctl.exec_line(line)
         ctl.close()
         return 0
 

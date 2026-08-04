@@ -18,32 +18,24 @@
 ⚠️ 安全：默认【只读】。--open 仅做【展开菜单】的轻量交互（hover/click 触发器），
    绝不提交/改值/导航/下载。展开后菜单选项的抓取仍是只读的。
 """
+import os
 import argparse
 import re
 import sys
 import json
-import io
 
-# 强制 UTF-8 输出（避免 Windows 控制台中文乱码）
-if sys.stdout and hasattr(sys.stdout, "reconfigure"):
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
+# Windows 控制台 UTF-8 修复（避免中文乱码，与 webctl 一致的双保险）
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import win_utf8
+    win_utf8.ensure_utf8_console()
+except Exception:
+    pass
 
 from playwright.sync_api import sync_playwright
 
 
 CDP_URL = "http://127.0.0.1:9222"
-
-# 清洗：剥离视觉/逻辑垃圾标签
-DROP_TAGS = {"meta", "link", "noscript", "canvas", "video", "audio", "iframe", "script", "style"}
-# 保留的关键属性（找选择器锚点用）
-KEEP_ATTRS = ["id", "class", "data-testid", "href", "src", "type", "name", "placeholder", "role", "aria-label"]
-
-# Tailwind 样式类（净化时剔除，避免污染 class）
-_TW = r"\b(sm:|md:|lg:|xl:|2xl:|hover:|focus:|active:|group-[a-z]+:)?(flex|grid|hidden|block|inline|absolute|relative|fixed|inset-\S+|w-\S+|h-\S+|m[trblxy]?-\S+|p[trblxy]?-\S+|bg-\S+|text-\S+|border\S*|rounded\S*|shadow\S*|opacity-\S+|z-\S+|gap-\S+|items-\S+|justify-\S+|leading-\S+|font-\S+|tracking-\S+|transition\S*|transform\S*|cursor-\S+|overflow-\S+)\b"
-TW_RE = re.compile(_TW)
 
 
 def _find_page(browser):
