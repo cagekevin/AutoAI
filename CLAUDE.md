@@ -132,22 +132,36 @@ python tools/webctl.py
 python tools/webctl.py --run "page|buttons|find 新建项目|state 按钮选择器|quit"
 python tools/webctl.py --url https://www.lovart.ai/zh/home --run "page|find 图像|quit"
 ```
-交互内命令：
+交互内命令（已内化常用操作，全命令见 `webctl.py` help）：
 ```
 open                      连接 9222 已登录浏览器
 page                      看当前页面 URL/标题
+nav <url|站点名>          导航到 URL 或站点(doubao/lovart/jimeng/flow)
 buttons                   列出页面所有可见按钮（摸结构）
 find <文本>               搜含文本的元素 + 锚点链（找 data-testid）
 open-menu <选择器> [click|hover]   展开下拉菜单（默认 hover）
 click <文本>              点击含该文本的按钮（精确 innerText，避开 has-text 冒号坑）
 state <选择器>            查看某元素内容（验证选择器是否生效）
+verify <sel> [; sel...]   批量验证多个选择器命中情况（total/visible）
+type <文本>|<选择器> <文本>  向输入框打字（拟人延迟）
+upload <选择器> <路径>    上传文件（file_chooser 拦截/set_input_files）
+flow <站点> <提示词> [--img 垫图] [--num 张数]  一键执行站点预设流程
+esc [键名]                按键，默认 Esc 关弹窗
+clear [选择器]            清空输入框
+coord <x> <y>             盲点屏幕坐标（收起菜单/弹窗）
+shot [路径]               截图当前页面
+waitimg <选择器> <张数> [超时秒]   等出图（SRC 差集轮询）
 html                      抓整页净化 DOM
 help / quit
 ```
 - 典型用法：`open` → `page` → `buttons` 看有哪些按钮 → `find "新建项目"` 找锚点 → `open-menu 触发器 click` 展开下拉 → `click "2K"` 试点 → `state 按钮选择器` 确认生效。
-- **`find` 是找选择器神器**：返回元素及其父级链的 testid/class/id。**`state` 是验证神器**：确认改的选择器真的能拿到元素。
-- 默认**只读**；`click`/`open-menu` 只做点击/展开的轻量交互（不提交/不改值/不导航）。
+- **`find` 是找选择器神器**：返回元素及其父级链的 testid/class/id。**`state`/`verify` 是验证神器**：确认改的选择器真的能拿到元素。
+- 默认**只读**；`click`/`open-menu`/`type`/`upload`/`flow` 只做轻量交互（不提交表单/不改值/不导航）。
 - 前提：Chrome 已带 9222 启动（`启动控制台.bat` 会做）。若报 `ECONNREFUSED`，提示用户先启动项目。
+- **排查经验**：
+  - 找不到选择器时，先用 `state`/`verify` 逐个验证，别凭空改；命中 0 先确认前置条件（模式/登录/有字/是否要新建项目），见"通用经验：功能面板是条件渲染的"。
+  - 用 `flow <站点>` 快速复现站点完整流程；用 `waitimg` 等出图、`shot` 截图看界面、`esc`/`coord` 破盾清弹窗。
+  - `--run` 里命令用 `|` 分隔；`verify` 内多个选择器用 `;` 分隔（避免与 `|` 冲突）。
 
 **单命令工具 `tools/dom_sniffer.py`（适合一次性单次抓取，不想进交互时）**：
 核心逻辑与 webctl 相同，命令式：
@@ -232,6 +246,7 @@ Windows 下让工具输出 UTF-8 中文不乱码。`webctl.py`/`dom_sniffer.py` 
 - **`.first` vs `.last`**：同 testid 有多个时想清楚取哪个（发送按钮通常 `.last` 是激活的那个；气泡取最新的用 `.last`）
 - **`:has-text` + `:visible` 可叠加**：`button:has-text("参考图"):visible`
 - **警惕 `.count()` 假象**：DOM 节点存在 ≠ 可见/可点，count 增加可能是骨架屏/占位符，**判图别靠数节点，靠 SRC 差集**
+- **功能面板是条件渲染的**：切对模式/填了字/已登录才出现（见"通用经验：功能面板是条件渲染的"）。找不到先满足前置条件再验证。
 
 **写进 `UI` 字典时的组合惯例：**
 - 允许写**逗号分隔的多选择器兜底**：`[data-testid="xxx"], [data-testid="yyy"]`（一个失效另一个顶上）
@@ -259,6 +274,16 @@ Windows 下让工具输出 UTF-8 中文不乱码。`webctl.py`/`dom_sniffer.py` 
 网页有记忆（Cookie/LocalStorage），上次停在某模式，这次别死脑筋去切。
 - **操作前先 `is_visible()` 嗅探**：门开着就跨过去，没开再动手
 - 非关键 UI 过渡动作套 `try...except: pass`，别让一个小按钮崩掉整个链路
+
+### 通用经验：功能面板是条件渲染的（Mode-First）
+很多面板/按钮不是一开始就在，要先满足前置条件才渲染/激活：
+- **先切模式，才有参数面板**：豆包/即梦/Lovart 等必须先选"图像生成"进入对应工作台，比例/模型/上传/出图才出现。未切模式或未登录时这些全为 0，别误判选择器失效。
+- **发送按钮随输入渲染**：输入框为空时不渲染/禁用发送按钮，填字后才出现。
+- **未登录锁工作台**：很多面板要登录态才渲染，未登录只弹"登录以解锁"。
+- **有的站要先"新建项目"**：Lovart 等从主页点"新建项目"进工作台后，参数面板/上传才可用。
+- **别一口气猛点，操作间停 1s 左右**：前端 React 渲染/水合有延迟，上一步刚点完，下一步元素还没就位。每个动作后 `time.sleep(1)` 左右，网站反应没那么快。
+
+**落地**：流程顺序先 `_switch_work_mode` 切模式 → 再填参数 → 后 `keyboard.type(prompt)` → 再 `_click(submit_btn)`；涉及"新建项目"的站点先点新建。**排查找不到时先确认模式/登录/有字/是否要新建项目，别急着改选择器。**
 
 ### 铁律 4：出图用"SRC 集合差集"，别数 DOM 节点
 - 现代框架先渲染 Base64 骨架屏占位，`locator.count()` 增加可能是假图

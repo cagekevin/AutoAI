@@ -1,36 +1,51 @@
-annotated-doc==0.0.4
-annotated-types==0.7.0
-anyio==4.12.1
-certifi==2026.2.25
-click==8.1.8
-et_xmlfile==2.0.0
-exceptiongroup==1.3.1
-fastapi==0.128.8
-greenlet==2.0.2
-h11==0.16.0
-httpcore==1.0.9
-httpx==0.28.1
-idna==3.11
-Jinja2==3.1.6
-MarkupSafe==3.0.3
-numpy==2.0.2
-openpyxl==3.1.5
-pandas==2.3.3
-pillow==11.3.0
-playwright==1.35.0
-playwright-stealth==2.0.0
-pydantic==2.13.2
-pydantic_core==2.46.2
-pyee==9.0.4
-python-dateutil==2.9.0.post0
-python-multipart==0.0.20
-pytz==2026.1.post1
-six==1.17.0
-sse-starlette==3.3.0
-starlette==0.49.3
-tinydb==4.8.2
-typing-inspection==0.4.2
-typing_extensions==4.15.0
-tzdata==2026.2
-uvicorn==0.39.0
-websockets==15.0.1
+# AutoAI 依赖清单
+# 适用环境: macOS Apple Silicon (arm64) / Python 3.12
+# 说明: 原文件为其他机器导出的精确锁定版本(全用 ==)。
+#       此处保留功能约束并放宽为兼容范围，便于在本机顺利安装与后续升级。
+#       如需完全复现旧环境，可改用 requirements.lock.txt(若提供)。
+
+# ---- Web 框架 ----
+fastapi>=0.110
+starlette>=0.36
+uvicorn>=0.27
+python-multipart>=0.0.9
+sse-starlette>=2.0
+pydantic>=2.5
+pydantic_core>=2.14
+# ---- HTTP / 异步 ----
+httpx>=0.27
+httpcore>=1.0
+anyio>=4.0
+h11>=0.14
+websockets>=12.0
+# ---- 模板 / 工具 ----
+Jinja2>=3.1
+MarkupSafe>=2.1
+click>=8.1
+# ---- 浏览器自动化 ----
+playwright>=1.40
+playwright-stealth>=1.0.0
+pyee>=11.0.0
+# ---- 数据处理 ----
+numpy>=1.26
+pandas>=2.0
+openpyxl>=3.1
+# ---- 图像 ----
+pillow>=10.0
+# ---- 日期 / 时区 ----
+python-dateutil>=2.8
+pytz>=2023.3
+tzdata>=2023.3
+six>=1.16
+# ---- 存储 / 配置 ----
+tinydb>=4.7
+# ---- 类型 / 工具 ----
+annotated-doc>=0.0.2
+annotated-types>=0.6
+exceptiongroup>=1.2
+idna>=3.4
+typing-inspection>=0.3
+typing_extensions>=4.8
+certifi>=2024.0
+et_xmlfile>=1.1
+greenlet>=3.0.3
