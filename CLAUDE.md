@@ -114,11 +114,18 @@ G:\AutoAI_01\
 5. **把抓到的净化 HTML 与现有 `UI` 字典比对**，判断选择器是否失效、如何更新。
 
 **首选工具 `tools/webctl.py`（通用浏览器交互控制台，推荐）**：
-AI 进入 REPL 后像操作浏览器一样**一条条命令连续操作**，完成「认路→摸结构→找锚点→展开菜单→点击验证」完整闭环，**不用自己写 Playwright 代码**：
+AI 进入 REPL 后像操作浏览器一样**一条条命令连续操作**，完成「认路→摸结构→找锚点→展开菜单→点击验证」完整闭环，**不用自己写 Playwright 代码**。
+两种调用方式：
 ```bash
-# 在 G:\AutoAI_01 下（venv python）：
+# ① 交互式（逐条命令，适合一步步探索）
 python tools/webctl.py
-# 交互内命令：
+
+# ② 脚本化一次性执行（适合 AI 脚本调用，用 | 分隔多条命令）
+python tools/webctl.py --run "page|buttons|find 新建项目|state 按钮选择器|quit"
+python tools/webctl.py --url https://www.lovart.ai/zh/home --run "page|find 图像|quit"
+```
+交互内命令：
+```
 open                      连接 9222 已登录浏览器
 page                      看当前页面 URL/标题
 buttons                   列出页面所有可见按钮（摸结构）
@@ -134,13 +141,21 @@ help / quit
 - 默认**只读**；`click`/`open-menu` 只做点击/展开的轻量交互（不提交/不改值/不导航）。
 - 前提：Chrome 已带 9222 启动（`启动控制台.bat` 会做）。若报 `ECONNREFUSED`，提示用户先启动项目。
 
-**单命令工具 `tools/dom_sniffer.py`（可选，适合一次性/脚本化）**：
-当 AI 只需单次抓取（不想进交互）时可用，核心逻辑与 webctl 相同：
+**单命令工具 `tools/dom_sniffer.py`（适合一次性单次抓取，不想进交互时）**：
+核心逻辑与 webctl 相同，命令式：
 ```bash
 python tools/dom_sniffer.py --find "Nano Banana"      # 搜文本+锚点链
 python tools/dom_sniffer.py --selector '[data-testid="xxx"]'   # 提取元素结构
 python tools/dom_sniffer.py --open '触发器' --open-action click --find "图像"   # 展开菜单后找
 ```
+
+**辅助模块 `tools/win_utf8.py`（无需手动调用）**：
+Windows 下让工具输出 UTF-8 中文不乱码。`webctl.py`/`dom_sniffer.py` 已自动集成，AI 无需单独调用。若在非 UTF-8 系统上中文乱码，是终端问题，不影响 AI 拿到的数据。
+
+**什么时候用哪个（决策指引）**：
+- 需要**连贯操作**（展开菜单→找→点→验证）→ 用 `webctl`（交互式或 `--run`）
+- 只需**一次性抓某个选择器** → 用 `dom_sniffer --find/--selector`
+- 两者都会自动处理中文乱码（集成 win_utf8）
 
 **本项目已有的辅助脚本**：`tools/engine_ide.py`、`tools/工具/adapter_*.py` 里有现成的 CDP 连接、DOM 提取、`execute_action` 路由逻辑，AI 可参考或复用其模式。
 
