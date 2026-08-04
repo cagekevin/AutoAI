@@ -245,7 +245,14 @@ class BaseAIEngine:
             trigger_key = routing_map.get(key, "param_panel_trigger")
             if trigger_key not in self.UI: continue
             
-            target_text = format_dict.get(key, "{}").format(val)
+            # 🛡️ 防御：PARAM_FORMAT 的值可能是字符串模板(可 .format()) 或字典映射(如 lovart 的 model)。
+            # 若是字典，说明该参数必须由子类重写方法处理，基类无法直接装填，这里降级为裸文本并跳过。
+            fmt = format_dict.get(key, "{}")
+            if isinstance(fmt, dict):
+                self._log(f"      ⚠️ 参数 [{key}] 的 PARAM_FORMAT 为字典映射，需子类重写处理，基类跳过。")
+                all_success = False
+                continue
+            target_text = fmt.format(val)
             
             try:
                 # 依然保持跨平台最稳的"点开 -> 选中 -> 收起"闭环操作

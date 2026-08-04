@@ -251,8 +251,8 @@ Windows 下让工具输出 UTF-8 中文不乱码。`webctl.py`/`dom_sniffer.py` 
 
 ### 铁律 2：UI 都是幻觉，遮挡必须强攻
 - 透明 Placeholder 遮罩、悬浮参数面板、忘了收起的下拉菜单会挡住目标
-- **不要迷信 `state="visible"`**（被遮挡 1px 就超时）。改用 `state="attached"`（只要在源码里就抓）
-- 配合 `click(force=True)` 无视遮挡
+- `state="attached"`（只要在源码里就抓）比 `state="visible"`（被遮挡 1px 就超时）更抗遮挡；但若 `visible` + `click(force=True)` 在当前引擎实测稳定，**不必强行改成 attached**——以实测稳定为准，两种都可用。
+- 关键防御手段是 `click(force=True)` 无视遮挡，以及点击前先定位到目标本身
 - **点完展开面板后，养成习惯敲 `Escape` + 屏幕角落 `mouse.click(10, 10)` 盲点一枪**，物理破盾
 
 ### 铁律 3：状态感知，不要线性流水线
