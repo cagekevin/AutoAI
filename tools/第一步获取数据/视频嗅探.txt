@@ -1,0 +1,1 @@
+javascript:(function(){let vids=Array.from(document.querySelectorAll('video, audio, source')).map(v=>v.src||v.currentSrc).filter(h=>h&&h.startsWith('http'));let unique=[...new Set(vids)];if(unique.length>0){prompt('🎯 侦测到 '+unique.length+' 个原生媒体直链，请全选复制：',unique.join('\n'));}else{alert('❌ 未侦测到原生媒体链接 (可能是加密的 m3u8 流)');}})();

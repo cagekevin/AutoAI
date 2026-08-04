@@ -1,0 +1,43 @@
+# ================= 虚拟环境 =================
+venv/
+env/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ================= 浏览器 profile（含登录态/Cookie，绝不上传）=================
+google_chrome_profile/
+chrome_debug_profile/
+chrome_profile/
+*_profile/
+
+# ================= 敏感配置 =================
+# config.json 含云控 Excel 链接，如不想公开可改为 config.json
+# 若确认无敏感信息想上传，删掉下面这行即可
+# config.json
+
+# ================= 运行时产物 =================
+Downloads/
+logs/
+*.log
+history.db
+*.db
+queue_backup.json
+
+# ================= 垫图资源 =================
+assets/references/
+
+# ================= 工具配置（可能含 cookie/路径）=================
+tools/*.json
+tools/工具/*.json
+
+# ================= 临时/缓存 =================
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*.swp
+
+# ================= 操作系统 =================
+Desktop.ini

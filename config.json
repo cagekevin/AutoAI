@@ -1,0 +1,44 @@
+{
+    "sites": {
+        "flow": {
+            "night_mode": {
+                "data_source_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vR7FbDUYnQY_eA3aCzkfPJHmr8pvwalu0uSd2lsoGFiyCcYDqHREtXsWVQmoQmZS5j-bGGQE5sa1xQ4/pub?output=xlsx",
+                "inject_dna": true,
+                "meltdown_protection": {
+                    "meltdown_failures": 5,
+                    "meltdown_sleep_seconds": 1800
+                }
+            }
+        },
+        "jimeng": {
+            "night_mode": {
+                "data_source_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vR7FbDUYnQY_eA3aCzkfPJHmr8pvwalu0uSd2lsoGFiyCcYDqHREtXsWVQmoQmZS5j-bGGQE5sa1xQ4/pub?output=xlsx",
+                "inject_dna": true,
+                "meltdown_protection": {
+                    "meltdown_failures": 5,
+                    "meltdown_sleep_seconds": 1800
+                }
+            }
+        },
+        "doubao": {
+            "night_mode": {
+                "data_source_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vR7FbDUYnQY_eA3aCzkfPJHmr8pvwalu0uSd2lsoGFiyCcYDqHREtXsWVQmoQmZS5j-bGGQE5sa1xQ4/pub?output=xlsx",
+                "inject_dna": true,
+                "meltdown_protection": {
+                    "meltdown_failures": 5,
+                    "meltdown_sleep_seconds": 1800
+                }
+            }
+        },
+        "lovart": {
+            "night_mode": {
+                "data_source_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vR7FbDUYnQY_eA3aCzkfPJHmr8pvwalu0uSd2lsoGFiyCcYDqHREtXsWVQmoQmZS5j-bGGQE5sa1xQ4/pub?output=xlsx",
+                "inject_dna": true,
+                "meltdown_protection": {
+                    "meltdown_failures": 5,
+                    "meltdown_sleep_seconds": 1800
+                }
+            }
+        }
+    }
+}

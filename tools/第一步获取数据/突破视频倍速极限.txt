@@ -1,0 +1,1 @@
+javascript:(function(){let v=document.querySelector('video');if(v){let speed=prompt("长官，请下达倍速指令（如 3 或 4）：","3");if(speed)v.playbackRate=parseFloat(speed);}else{alert("未发现视频目标！");}})();

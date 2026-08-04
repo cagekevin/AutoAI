@@ -1,0 +1,1 @@
+javascript:(function(){let s=prompt('长官，要消灭哪个词汇？');if(!s)return;let r=prompt('替换成什么？');if(!r)return;const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,null,false);let n;while(n=walk.nextNode()){n.nodeValue=n.nodeValue.split(s).join(r);}})();

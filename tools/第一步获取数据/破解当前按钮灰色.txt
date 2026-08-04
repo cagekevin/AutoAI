@@ -1,0 +1,1 @@
+javascript:(function(){document.querySelectorAll('input,button,select,textarea').forEach(e=>{e.removeAttribute('disabled');e.removeAttribute('readonly');e.classList.remove('disabled');});alert('✅ 已强行解除当前网页所有表单和按钮的物理锁定！');})();

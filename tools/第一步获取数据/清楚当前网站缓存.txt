@@ -1,0 +1,1 @@
+javascript:(function(){localStorage.clear();sessionStorage.clear();document.cookie.split(';').forEach(c=>{document.cookie=c.replace(/^ +/,'').replace(/=.*/,'=;expires='+(new Date().toUTCString())+';path=/');});alert('✅ 本地域名缓存与 Cookie 已全部物理清空！\n请按 F5 刷新网页，你现在是一个全新的访客了。');})();

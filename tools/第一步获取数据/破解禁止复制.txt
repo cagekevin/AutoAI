@@ -1,0 +1,1 @@
+javascript:(()=>{let e=document.createElement('style');e.innerHTML='*{user-select: auto !important;-webkit-user-select: auto !important;}';document.head.appendChild(e);['contextmenu','copy','selectstart','dragstart'].forEach(ev=>document.addEventListener(ev,e=>e.stopPropagation(),true));})();

@@ -1,0 +1,1 @@
+javascript:(function(){let count=0;document.querySelectorAll('*').forEach(e=>{let s=window.getComputedStyle(e);if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0'){e.style.display='block';e.style.visibility='visible';e.style.opacity='1';e.style.border='2px dashed red';count++;}});alert('✅ 幽灵显影完毕！\n共强行实体化了 '+count+' 个隐藏元素，并已用红框标记。');})();

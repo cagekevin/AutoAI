@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AutoAIv10</title>
+    <style>
+        /* ================= 极简 UI 变量 ================= */
+        :root { 
+            --bg: #f1f5f9; --panel: #ffffff; --text: #334155; --border: #cbd5e1; 
+            --primary: #3b82f6; --danger: #ef4444; --success: #10b981;
+            --banner-bg: #e0f2fe; --banner-text: #0369a1;
+        }
+        /* 🌙 夜间模式视觉变量 */
+        body.night-mode { 
+            --bg: #020617; --panel: #0f172a; --text: #94a3b8; --border: #1e293b; 
+            --banner-bg: #1e1b4b; --banner-text: #818cf8;
+        }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, sans-serif; font-size: 13px; }
+        body { display: flex; flex-direction: column; height: 100vh; background: var(--bg); color: var(--text); overflow: hidden; transition: 0.3s; }
+        
+        /* ================= 布局工具类 ================= */
+        .flex-row { display: flex; align-items: center; gap: 15px; }
+        .flex-row-sm { display: flex; align-items: center; gap: 10px; }
+        .flex-between { display: flex; justify-content: space-between; align-items: center; }
+        .hidden { display: none !important; }
+
+        /* ================= 顶部全局导航 ================= */
+        .header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 12px 20px; z-index: 10; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .brand-title { font-size: 16px; font-weight: 800; }
+        .engine-select { border: none; background: var(--bg); padding: 6px; border-radius: 6px; outline: none; cursor: pointer; color: var(--text); }
+        
+        /* ================= 通用按钮 ================= */
+        .btn { padding: 6px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--text); font-weight: bold; transition: 0.2s; outline: none; }
+        .btn:hover { background: #f8fafc; border-color: #94a3b8; }
+        .btn-primary { background: var(--primary); color: white; border-color: var(--primary); }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-danger { background: #fee2e2; color: #dc2626; border-color: #fca5a5; }
+        .btn-danger:hover { background: #fecaca; }
+        .btn-night { background: #1e293b; color: #fff; border-color: #1e293b; }
+        .btn-night:hover { background: #334155; }
+        .btn-clear { border: none; color: #64748b; background: transparent; }
+        .btn-success { background: var(--success); color: #fff; border: none; }
+        .btn-term-clear { background: transparent; border-color: #334155; color: #64748b; }
+        .btn-success, .btn-term-clear { padding: 4px 10px; }
+
+        /* ================= 主视区 ================= */
+        main { flex: 1; display: flex; overflow: hidden; }
+        .pipeline-pane { width: 60%; display: flex; flex-direction: column; background: var(--bg); border-right: 1px solid var(--border); }
+        .term-pane { width: 40%; background: #0f172a; display: flex; flex-direction: column; }
+        
+        /* ================= 任务大厅内部组件 ================= */
+        .controls { padding: 15px 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
+        .run-banner { padding: 15px 20px; background: var(--banner-bg); border-bottom: 1px solid var(--border); color: var(--banner-text); font-weight: bold; font-size: 14px; }
+        .run-icon { font-size: 18px; margin-right: 10px; }
+        .queue-list { flex: 1; overflow-y: auto; background: var(--panel); }
+        .queue-empty { padding: 40px; text-align: center; color: #94a3b8; }
+        .queue-item { padding: 12px 20px; border-bottom: 1px solid var(--border); transition: 0.2s; display: flex; align-items: center; }
+        .queue-item:hover { background: #f8fafc; }
+        .q-idx { width: 30px; color: #94a3b8; font-weight: 800; }
+        .q-img { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; border: 1px solid var(--border); margin-right: 12px; }
+        .q-img-txt { width: 32px; height: 32px; border-radius: 4px; margin-right: 12px; display: flex; align-items: center; justify-content: center; background: #f1f5f9; color: #94a3b8; font-size: 10px; border: 1px solid var(--border); }
+        .q-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+        .q-actions { display: flex; gap: 8px; margin-left: auto; }
+        .q-btn-edit { padding: 2px 8px; color: var(--primary); background: transparent; border-color: var(--border); }
+        .q-btn-rm { padding: 2px 8px; color: var(--danger); background: transparent; border-color: var(--border); }
+        
+        /* ================= 夜间模式大屏 ================= */
+        .night-overlay { flex: 1; display: flex; align-items: center; flex-direction: column; justify-content: center; text-align: center; color: #818cf8; }
+        .night-icon { font-size: 60px; margin-bottom: 20px; }
+        .night-title { font-size: 20px; font-weight: bold; color: #a5b4fc; }
+        .night-desc { margin-top: 10px; opacity: 0.7; font-size: 14px; }
+        .night-stop-btn { margin-top: 40px; padding: 10px 20px; }
+
+        /* ================= 终端区组件 ================= */
+        .term-header { padding: 12px 20px; background: #020617; border-bottom: 1px solid #1e293b; }
+        .term-prog { color: #94a3b8; font-family: monospace; font-size: 12px; }
+        .terminal { flex: 1; padding: 15px 20px; overflow-y: auto; font-family: "JetBrains Mono", monospace; color: #94a3b8; white-space: pre-wrap; line-height: 1.6; font-size: 12px; }
+        .log-err { color: #f87171; } .log-ok { color: #34d399; } .log-warn { color: #fbbf24; }
+        
+        /* ================= 弹窗与表单组件 ================= */
+        dialog { margin: auto; border: 1px solid var(--border); border-radius: 12px; padding: 25px; width: 600px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); background: var(--panel); color: var(--text); }
+        dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
+        .dlg-title { font-weight: 800; margin-bottom: 20px; font-size: 18px; color: var(--text); }
+        
+        /* 核心：左图右文布局 */
+        .day-layout { display: flex; gap: 15px; align-items: stretch; }
+        .day-left { width: 180px; display: flex; flex-direction: column; gap: 10px; }
+        .day-right { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+
+        /* 左侧供弹区 */
+        .dropzone { border: 2px dashed var(--border); height: 80px; display: flex; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; position: relative; color: #94a3b8; background: var(--bg); transition: 0.2s; text-align: center; }
+        .dropzone:hover { border-color: var(--primary); background: #eff6ff; color: var(--primary); }
+        .dz-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #fff; border-radius: 6px; }
+        .dz-clear { position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: 11px; }
+        
+        .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; overflow-y: auto; max-height: 145px; align-content: start; }
+        .gallery::-webkit-scrollbar { width: 6px; }
+        .gallery::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .gallery img { width: 100%; height: 48px; object-fit: cover; cursor: pointer; border: 2px solid transparent; border-radius: 6px; }
+        .gallery img.active { border-color: var(--primary); transform: scale(1.05); }
+        
+        /* 右侧参数双列 */
+        .param-row { display: flex; gap: 10px; }
+        .param-row > select { flex: 1; }
+
+        textarea, select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-family: inherit; line-height: 1.5; outline: none; background: var(--bg); color: var(--text); }
+        textarea { resize: vertical; }
+        textarea:focus, select:focus { border-color: var(--primary); background: var(--panel); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+        
+        .night-rules { color: #64748b; line-height: 1.8; background: var(--bg); padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+        .cfg-textarea { background: #1e293b; color: #38bdf8; font-family: monospace; border: none; }
+        .dlg-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+        
+        /* --- 新增：批量操作与禁用状态样式 --- */
+        .q-chk { margin-right: 12px; cursor: pointer; transform: scale(1.3); accent-color: var(--primary); }
+        .batch-controls { display: flex; align-items: center; gap: 10px; margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--border); }
+        textarea:disabled { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; font-weight: bold; border-style: dashed; }
+        body.night-mode textarea:disabled { background: #1e293b; color: #64748b; }
+        
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body>
+
+    <header class="header flex-between">
+        <div class="flex-row">
+            <b class="brand-title">AutoAI</b>
+            <select id="engine-sel" class="engine-select">
+                <option value="lovart" selected>Lovart 引擎 ▼</option>
+                <option value="jimeng">即梦 (Jimeng) ▼</option>
+                <option value="flow">Google Flow ▼</option>
+                <option value="doubao">豆包 Flow ▼</option>
+            </select>
+        </div>
+        <div class="flex-row-sm">
+            <button class="btn" onclick="getE('dlg-cfg').showModal()">⚙️ 配置中心</button>
+            <button class="btn btn-night" id="btn-night-entry" onclick="getE('dlg-night').showModal()">🌙 夜间挂机</button>
+        </div>
+    </header>
+
+    <main>
+        <section class="pipeline-pane">
+            <div class="controls flex-between" id="day-controls">
+                <div class="flex-row-sm">
+                    <button class="btn btn-primary" style="padding: 8px 16px; font-size: 14px;" onclick="openDayDlg()">➕ 新建任务</button>
+                    <div class="batch-controls">
+                        <input type="checkbox" id="chk-all" class="q-chk" onchange="toggleSelectAll(this.checked)" title="全选/全不选">
+                        <button class="btn" id="btn-batch-edit" onclick="openBatchDlg()" style="display:none; border-color:var(--primary); color:var(--primary);">✏️ 批量装配</button>
+                    </div>
+                    <button class="btn" onclick="fetchAPI('/api/start_day_mode', {engine: engine(), prompts: [], image_name: '', aspect_ratio: ''})">▶️ 启动</button>
+                    <button class="btn btn-danger" onclick="if(confirm('切断流水线引擎？\n大厅任务将保留。')) fetchAPI('/api/stop')">🛑 停止</button>
+                    <button class="btn" id="pause-btn" style="background:#f59e0b; color:#fff; border-color:#d97706;" onclick="togglePause()">⏸️ 暂停</button>
+                </div>
+                <button class="btn btn-clear" onclick="clearQueue()">🗑️ 清空队列</button>
+            </div>
+
+            <div id="run-banner" class="run-banner flex-row-sm">
+                <span id="run-icon" class="run-icon">💤</span> 
+                <span id="run-text">暂无执行任务</span>
+            </div>
+
+            <div id="q-list" class="queue-list"></div>
+
+            <div id="night-view" class="night-overlay hidden">
+                <div class="night-icon">☁️</div>
+                <div class="night-title">夜间云端接管中</div>
+                <p class="night-desc">所有任务已由云端 Excel 托管，人工微操已锁定</p>
+                <button class="btn btn-danger night-stop-btn" onclick="stopNight()">🛑 终止夜间模式并切回日间</button>
+            </div>
+        </section>
+
+        <section class="term-pane">
+            <div class="term-header flex-between">
+                <div class="term-prog">进度: <b id="prog-text" style="color:#fff;">0/0</b></div>
+                <div class="flex-row-sm">
+                    <button class="btn btn-success" onclick="fetchAPI('/api/confirm_resume')">✅ 人工放行</button>
+                    <button class="btn btn-term-clear" onclick="getE('term').innerHTML=''">清屏</button>
+                </div>
+            </div>
+            <div id="term" class="terminal"></div>
+        </section>
+    </main>
+
+    <dialog id="dlg-day">
+        <div class="dlg-title" id="day-title">🛸 新建任务指令舱</div>
+        
+        <div class="day-layout">
+            <div class="day-left">
+                <div class="dropzone" ondragover="event.preventDefault()" ondrop="handleDrop(event)" onclick="getE('file-upload').click()">
+                    <span id="dz-text">📁 点击/拖拽</span>
+                    <input type="file" id="file-upload" class="hidden" onchange="if(this.files.length) handleFile(this.files[0])">
+                    <img id="dz-preview" class="dz-preview hidden">
+                    <button id="dz-clear" class="btn btn-danger dz-clear hidden" onclick="clearImg(event)">清除</button>
+                </div>
+                <div id="gallery" class="gallery"></div>
+            </div>
+
+            <div class="day-right">
+                <textarea id="day-prompts" rows="6" placeholder="直接 Ctrl+V 粘贴多行提示词...&#10;赛博朋克猫咪，霓虹灯背景..."></textarea>
+                
+                <div class="param-row">
+                    <select id="day-ratio" title="画面比例">
+                        <option value="9:16">比例: 9:16 (竖屏)</option>
+                        <option value="16:9">比例: 16:9 (横屏)</option>
+                        <option value="1:1">比例: 1:1 (方图)</option>
+                        <option value="3:4">比例: 3:4</option>
+                        <option value="4:3">比例: 4:3</option>
+                    </select>
+                    <select id="day-amount" title="生成数量">
+                        <option value="1">数量: 1张</option>
+                        <option value="2">数量: 2张</option>
+                        <option value="4">数量: 4张</option>
+                    </select>
+                </div>
+            
+                <label class="flex-row-sm" style="cursor: pointer; color: var(--primary); font-weight: bold; margin-top: 5px;">
+                    <input type="checkbox" id="day-inject-dna" checked> 注入基础 DNA
+                </label>
+            </div>
+        </div>
+
+        <div class="dlg-footer">
+            <button class="btn" onclick="editingTaskId=''; this.closest('dialog').close()">取消</button>
+            <button class="btn btn-primary" id="day-submit-btn" onclick="submitDay()">🚀 发射到大厅队尾</button>
+        </div>
+    </dialog>
+
+    <dialog id="dlg-night">
+        <div class="dlg-title">🌙 启动夜间无人值守</div>
+        <p class="night-rules">
+            <b>执行规范：</b><br>
+            1. 将强制清空当前大厅残留的日间任务。<br>
+            2. 自动拉取云端 Excel 任务进行死磕。<br>
+            3. 触发连续失败将自动进入休眠保护。
+        </p>
+        <div class="dlg-footer">
+            <button class="btn" onclick="this.closest('dialog').close()">取消</button>
+            <button class="btn btn-night" onclick="submitNight()">▶️ 确认启动</button>
+        </div>
+    </dialog>
+
+    <dialog id="dlg-cfg">
+        <div class="dlg-title">⚙️ 系统全局配置</div>
+        <textarea id="cfg-text" rows="18" class="cfg-textarea" spellcheck="false">{{ config_str }}</textarea>
+        <div class="dlg-footer" style="justify-content:space-between;">
+            <button class="btn" onclick="syncCloud()">☁️ 从云端同步最新参数</button>
+            <div class="flex-row-sm">
+                <button class="btn" onclick="this.closest('dialog').close()">关闭</button>
+                <button class="btn btn-success" onclick="saveCfg()">💾 保存生效</button>
+            </div>
+        </div>
+    </dialog>
+
+    <script>
+        let curImg = "", currentQueue = [];
+        let editingTaskId = ""; // 核心防丢标记：临时存储正在修改的 ID
+        let selectedTaskIds = new Set(); // 批量选中的任务集合
+        let isBatchEditing = false;      // 面板形态：是否处于批量修改模式
+
+        const getE = id => document.getElementById(id);
+        const engine = () => getE('engine-sel').value;
+
+        window.onload = () => { fetchGallery(); connectWS(); setInterval(poll, 1500); };
+
+        async function poll() {
+            try {
+                const [s, q] = await Promise.all([fetch('/api/status').then(r=>r.json()), fetch('/api/queue').then(r=>r.json())]);
+                currentQueue = q.pending || [];
+                
+                // 🚀 核心：切换暗黑夜间视觉
+                const isNight = s.current_mode === "night";
+                document.body.classList.toggle('night-mode', isNight);
+                getE('day-controls').classList.toggle('hidden', isNight);
+                getE('q-list').classList.toggle('hidden', isNight);
+                getE('night-view').classList.toggle('hidden', !isNight);
+                getE('btn-night-entry').classList.toggle('hidden', isNight);
+
+                // 渲染横幅
+                const rb = getE('run-banner');
+                if (s.is_running && q.current_task) {
+                    getE('run-icon').innerText = isNight ? "🌙" : "🏃";
+                    getE('run-icon').style.animation = "pulse 1.5s infinite";
+                    getE('run-text').innerText = (isNight ? "[夜间接管] " : "正在执行: ") + q.current_task;
+                } else {
+                    getE('run-icon').innerText = "💤"; getE('run-icon').style.animation = "none";
+                    getE('run-text').innerText = s.is_running ? "引擎已启动，等待喂食..." : "暂无执行任务";
+                }
+
+                // 渲染流水线列表 (仅白天)
+                if(!isNight) {
+                    getE('q-list').innerHTML = currentQueue.length ? currentQueue.map((t, i) => `
+                        <div class="queue-item" onclick="toggleSelect('${t.task_name}', !event.currentTarget.querySelector('.q-chk').checked)">
+                            <input type="checkbox" class="q-chk" value="${t.task_name}" ${selectedTaskIds.has(t.task_name) ? 'checked' : ''} onclick="event.stopPropagation(); toggleSelect('${t.task_name}', this.checked)">
+                            <span class="q-idx">${i+1}.</span>
+                            ${t.image_path ? `<img src="/assets/references/${t.image_path.split(/[\\/]/).pop()}" class="q-img">` : '<div class="q-img-txt">TXT</div>'}
+                            <span class="q-text" title="${t.prompt}">${t.prompt}</span>
+                            <div class="q-actions">
+                                <button class="btn q-btn-edit" style="color:#0ea5e9" onclick="moveToTop('${t.task_name}')">⬆️ 置顶</button>
+                                <button class="btn q-btn-edit" onclick="recallTask('${t.task_name}')">✏️ 修改</button>
+                                <button class="btn q-btn-rm" onclick="rmTask('${t.task_name}')">❌ 撤单</button>
+                            </div>
+                        </div>`).join('') : '<div class="queue-empty">📭 大厅空空如也，点击【新建任务】发车</div>';
+                }
+            } catch(e){}
+        }
+
+        async function fetchAPI(url, body=null, silent=false) {
+            try {
+                const res = await (await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:body?JSON.stringify(body):null})).json();
+                if(!silent && res.status !== 'success') alert(res.msg);
+                poll(); return res;
+            } catch(e) { if(!silent) alert("请求失败"); }
+        }
+
+        // --- 新增：批量打钩与 UI 更新逻辑 ---
+        function toggleSelect(id, checked) {
+            if(checked) selectedTaskIds.add(id); else selectedTaskIds.delete(id);
+            updateBatchUI(); poll(); // 强制刷新勾选状态
+        }
+        function toggleSelectAll(checked) {
+            if(checked) currentQueue.forEach(t => selectedTaskIds.add(t.task_name));
+            else selectedTaskIds.clear();
+            updateBatchUI(); poll();
+        }
+        function updateBatchUI() {
+            const btn = getE('btn-batch-edit');
+            btn.style.display = selectedTaskIds.size >= 2 ? 'inline-block' : 'none';
+            btn.innerText = `✏️ 批量装配 (${selectedTaskIds.size})`;
+            getE('chk-all').checked = currentQueue.length > 0 && selectedTaskIds.size === currentQueue.length;
+        }
+
+        // --- 业务逻辑 (三态合一面板) ---
+        function openDayDlg() { 
+            editingTaskId = ""; isBatchEditing = false;
+            getE('day-title').innerText="🛸 新建任务指令舱"; 
+            getE('day-submit-btn').innerText="🚀 发射到大厅队尾"; 
+            const ta = getE('day-prompts');
+            ta.value=""; ta.disabled=false; ta.placeholder="直接 Ctrl+V 粘贴多行提示词...\n赛博朋克猫咪，霓虹灯背景...";
+            getE('day-ratio').value="9:16"; getE('day-amount').value="1";
+            clearImg(); getE('dlg-day').showModal(); 
+        }
+
+        async function recallTask(taskId) {
+            const task = currentQueue.find(t => t.task_name === taskId);
+            if(!task) return alert("⚠️ 该任务可能刚被引擎抽走，无法修改！");
+            
+            editingTaskId = taskId; isBatchEditing = false;
+            getE('day-title').innerText="🛠️ 回炉重造 (修改任务)"; 
+            getE('day-submit-btn').innerText="🚀 确认修改并发射";
+            const ta = getE('day-prompts');
+            ta.value = task.prompt; ta.disabled = false;
+            getE('day-amount').value="1";
+            
+            if(task.engine_params && task.engine_params.aspect_ratio) { getE('day-ratio').value = task.engine_params.aspect_ratio; }
+            if(task.image_path) { selImg(task.image_path); } else { clearImg(); }
+            getE('dlg-day').showModal();
+        }
+
+        function openBatchDlg() {
+            if(selectedTaskIds.size === 0) return;
+            editingTaskId = ""; isBatchEditing = true;
+            getE('day-title').innerText="📦 批量物理装配";
+            getE('day-submit-btn').innerText="🚀 裂变并覆盖至队尾";
+            const ta = getE('day-prompts');
+            ta.value = `[ 已锁定 ${selectedTaskIds.size} 个任务的提示词 ]\n\n🔒 提示词受到保护，仅会覆盖垫图、比例与数量。\n⚠️ 确认发射后，所选的旧任务将被撤单，新任务将降落在大厅队尾。`;
+            ta.disabled = true;
+            getE('day-ratio').value="9:16"; getE('day-amount').value="1";
+            clearImg(); getE('dlg-day').showModal();
+        }
+
+        async function submitDay() {
+            let basePrompts = [];
+            
+            if (isBatchEditing) {
+                // 状态C：批量装配 -> 提取所有被勾选任务的“原味提示词”
+                currentQueue.forEach(t => {
+                    if (selectedTaskIds.has(t.task_name)) basePrompts.push(t.prompt);
+                });
+            } else {
+                // 状态A/B：新建或单改 -> 直接读取输入框
+                basePrompts = getE('day-prompts').value.split('\n').map(l=>l.trim()).filter(Boolean);
+                if(!basePrompts.length) return alert("老哥，没填提示词啊！");
+            }
+            
+            const btn = getE('day-submit-btn'); 
+            const originTxt = btn.innerText;
+            btn.innerText = "引擎过载装填中...";
+            
+            // 【粗暴覆盖1】如果是单改，先杀旧的
+            if (editingTaskId && !isBatchEditing) {
+                await fetchAPI('/api/remove_task', {task_name: editingTaskId}, true);
+            }
+            
+            // 【粗暴覆盖2】如果是批改，一波带走所有被勾选的旧任务
+            if (isBatchEditing) {
+                for (const id of selectedTaskIds) {
+                    await fetchAPI('/api/remove_task', {task_name: id}, true);
+                }
+            }
+
+            // 【倍增魔法】按照数量选项，成倍克隆提示词（后端接收到多少个提示词，就会创建多少个任务）
+            const amount = parseInt(getE('day-amount').value) || 1;
+            let finalPrompts = [];
+            for (let i = 0; i < amount; i++) {
+                finalPrompts.push(...basePrompts);
+            }
+
+            // 🚀 万剑归宗：带着统一的新垫图和新比例，将裂变后的舰队全抛给后端
+            const selectedRatio = getE('day-ratio').value;
+            const res = await fetchAPI('/api/start_day_mode', { 
+                engine: engine(), 
+                prompts: finalPrompts, 
+                image_name: curImg,
+                aspect_ratio: selectedRatio,
+                inject_dna: getE('day-inject-dna').checked
+            });
+            
+            if(res && res.status==='success') {
+                getE('dlg-day').close();
+                selectedTaskIds.clear(); // 射击完毕，清空准星
+                updateBatchUI();
+            }
+            btn.innerText = originTxt;
+        }
+
+        // 精准删除与清空
+        async function rmTask(taskId) { fetchAPI('/api/remove_task', {task_name: taskId}); }
+        
+        async function clearQueue() { 
+            if(confirm("⚠️ 确定要清空大厅里所有排队的任务吗？")) {
+                await fetchAPI('/api/clear_queue'); 
+            } 
+        }
+
+        async function submitNight() {
+            await fetchAPI('/api/clear_queue', null, true); // 夜间启动前静默清场
+            const res = await fetchAPI('/api/start_night_mode', {engine: engine()});
+            if(res && res.status==='success') getE('dlg-night').close();
+        }
+
+        async function stopNight() { if(confirm("确定终止夜间模式？")) fetchAPI('/api/stop'); }
+
+        // --- 🖼️ 图库与拖拽填装 ---
+        async function fetchGallery() {
+            const r = await (await fetch('/api/images')).json();
+            getE('gallery').innerHTML = r.images.map(f => `<img src="/assets/references/${f}" class="${curImg===f?'active':''}" onclick="selImg('${f}')" title="${f}">`).join('');
+        }
+        function selImg(f) { 
+            curImg = f; 
+            getE('dz-text').classList.add('hidden'); 
+            getE('dz-preview').src = `/assets/references/${f}`; 
+            getE('dz-preview').classList.remove('hidden'); 
+            getE('dz-clear').classList.remove('hidden'); 
+            fetchGallery(); 
+        }
+        function clearImg(e) { 
+            if(e) e.stopPropagation(); 
+            curImg = ""; 
+            getE('dz-text').classList.remove('hidden'); 
+            getE('dz-preview').classList.add('hidden'); 
+            getE('dz-clear').classList.add('hidden'); 
+            getE('file-upload').value = ""; // 清空 input 缓存
+            fetchGallery(); 
+        }
+        async function handleFile(file) {
+            getE('dz-text').innerText = "极速上传中...";
+            const fd = new FormData(); fd.append('file', file);
+            const res = await (await fetch('/api/upload', {method:'POST', body:fd})).json();
+            if(res.status==='success') { selImg(res.filename); } else { alert("图片上传失败"); getE('dz-text').innerText = "📁 点击或拖拽本地图片到这里"; }
+        }
+        function handleDrop(e) { e.preventDefault(); if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); }
+
+        // --- ⚙️ 配置中心 ---
+        async function saveCfg() { await fetchAPI('/api/save_config', JSON.parse(getE('cfg-text').value)); alert("保存成功"); getE('dlg-cfg').close(); }
+        async function syncCloud() {
+            const btn = event.target; btn.innerText = "同步中...";
+            const res = await fetchAPI('/api/sync_cloud_config', {engine: engine()});
+            if(res && res.status==='success') getE('cfg-text').value = JSON.stringify(res.new_config, null, 4);
+            btn.innerText = "☁️ 从云端同步最新参数";
+        }
+
+        // --- 💻 底层终端 ---
+        function connectWS() {
+            const ws = new WebSocket(`ws://${location.host}/ws/logs`);
+            ws.onmessage = e => {
+                const m = e.data, t = getE('term');
+                const prog = m.match(/进度:\s*([\d/]+)/);
+                if (prog) getE('prog-text').innerText = prog[1];
+                const div = document.createElement("div");
+                div.className = m.includes("❌")||m.includes("ERR")?"log-err":m.includes("✅")?"log-ok":m.includes("⚠️")?"log-warn":"";
+                div.innerText = m; t.appendChild(div); t.scrollTop = t.scrollHeight;
+            };
+            ws.onclose = () => setTimeout(connectWS, 2000); 
+        }
+
+        // [Fix: 新增原生 JS 事件分发 - 一键置顶与柔性暂停]
+        async function moveToTop(taskId) {
+            await fetchAPI('/api/move_to_top', {task_name: taskId});
+        }
+
+        let isPaused = false;
+        async function togglePause() {
+            const res = await fetchAPI('/api/toggle_pause', null, true);
+            if(res && res.status === 'success') {
+                isPaused = !isPaused;
+                const btn = getE('pause-btn');
+                if(isPaused) {
+                    btn.innerText = "▶️ 恢复执行";
+                    btn.style.background = "#10b981"; // 恢复绿
+                    btn.style.borderColor = "#059669";
+                } else {
+                    btn.innerText = "⏸️ 暂停";
+                    btn.style.background = "#f59e0b"; // 待命黄
+                    btn.style.borderColor = "#d97706";
+                }
+                alert(res.msg);
+            } else {
+                alert(res?.msg || "操作失败");
+            }
+        }
+    </script>
+</body>
+</html>

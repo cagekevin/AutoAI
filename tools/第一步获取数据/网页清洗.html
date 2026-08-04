@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>🛸 DOM 净化舱 (幽灵绿极简版)</title>
+    <style>
+        /* 🎨 战术涂装重构：全系幽灵绿主题 */
+        :root { 
+            --bg: #0d1117; 
+            --panel: #161b22; 
+            --text: #c9d1d9; 
+            --accent: #238636; /* 核心主色调：战术绿 */
+            --accent-hover: #2ea043; /* 悬浮亮绿色 */
+            --border: #30363d; 
+            --danger: #f85149; 
+        }
+        body { margin: 0; padding: 20px; background-color: var(--bg); color: var(--text); font-family: -apple-system, sans-serif; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+        h1 { margin: 0 0 20px 0; font-size: 22px; color: #fff; font-weight: 600; text-align: center; letter-spacing: 2px;}
+        
+        .grid-container { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); gap: 20px; flex: 1; min-height: 0; }
+        
+        .step-card { background: var(--panel); border: 2px dashed var(--border); border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; transition: 0.3s; position: relative; }
+        .step-card.success { border: 2px solid var(--accent); background: rgba(35, 134, 54, 0.05); }
+        
+        .card-header { padding: 10px 15px; background: #010409; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+        .step-num { background: var(--border); color: #fff; font-weight: bold; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 12px; }
+        .step-card.success .step-num { background: var(--accent); }
+        
+        .step-name { flex: 1; background: transparent; border: none; color: #fff; font-size: 14px; font-weight: bold; outline: none; }
+        .step-name:focus { border-bottom: 1px solid var(--accent); }
+        
+        .reset-btn { display: none; background: transparent; border: none; color: var(--danger); cursor: pointer; font-size: 12px; font-weight: bold; }
+        .step-card.success .reset-btn { display: block; }
+        
+        .paste-zone { flex: 1; background: transparent; color: var(--text); border: none; padding: 15px; font-family: 'JetBrains Mono', monospace; font-size: 14px; resize: none; outline: none; text-align: center; display: flex; align-items: center; justify-content: center; }
+        .paste-zone::placeholder { color: #8b949e; }
+        .paste-zone:focus::placeholder { color: transparent; }
+        
+        /* 成功后的覆盖层及单步复制按钮 */
+        .success-overlay { display: none; position: absolute; top: 45px; left: 0; right: 0; bottom: 0; background: var(--bg); align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--accent-hover); font-size: 16px; font-weight: bold; }
+        .step-card.success .success-overlay { display: flex; }
+        .copy-single-btn { background: var(--panel); border: 1px solid var(--accent); color: var(--accent-hover); padding: 6px 16px; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; transition: 0.2s; margin-top: 5px; }
+        .copy-single-btn:hover { background: var(--accent); color: #fff; }
+
+        .submit-bar { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+        .btn-huge { width: 100%; padding: 18px; font-size: 18px; font-weight: bold; background: var(--accent); color: #fff; border: none; border-radius: 8px; cursor: pointer; transition: 0.2s; box-shadow: 0 4px 15px rgba(35, 134, 54, 0.2); }
+        .btn-huge:hover { background: var(--accent-hover); transform: translateY(-2px); }
+    </style>
+</head>
+<body>
+
+    <h1>🚀 自动化实战 SOP 六宫格面板</h1>
+
+    <div class="grid-container" id="grid">
+        </div>
+
+    <div class="submit-bar">
+        <button class="btn-huge" onclick="exportToLLM()" id="exportBtn">📋 组装完毕！一键复制给大模型 (附带最强 Prompt)</button>
+    </div>
+
+    <script>
+        const stateDB = new Array(6).fill(null);
+        
+        const defaultSteps = [
+            "步骤1",
+            "步骤2",
+            "步骤3",
+            "步骤4",
+            "步骤5",
+            "步骤6"
+        ];
+
+        const grid = document.getElementById('grid');
+        defaultSteps.forEach((name, i) => {
+            grid.innerHTML += `
+                <div class="step-card" id="card-${i}">
+                    <div class="card-header">
+                        <div class="step-num">${i + 1}</div>
+                        <input type="text" class="step-name" id="name-${i}" value="${name}">
+                        <button class="reset-btn" onclick="resetCard(${i})">✖ 删</button>
+                    </div>
+                    <textarea class="paste-zone" id="input-${i}" placeholder="👈 在此点击并按 Ctrl+V 粘贴 F12 代码..."></textarea>
+                    <div class="success-overlay" id="overlay-${i}">
+                        <div style="font-size: 28px;">✅</div>
+                        <div>已提纯脱水</div>
+                        <button class="copy-single-btn" id="single-btn-${i}" onclick="copySingleStep(${i})">📋 复制此步</button>
+                    </div>
+                </div>
+            `;
+        });
+
+        for (let i = 0; i < 6; i++) {
+            const input = document.getElementById(`input-${i}`);
+            input.addEventListener('paste', async (e) => {
+                e.preventDefault();
+                const raw = e.clipboardData.getData('text/html') || e.clipboardData.getData('text/plain');
+                if (!raw) return;
+                
+                input.placeholder = "⏳ 正在极速提纯...";
+                await new Promise(r => setTimeout(r, 50)); 
+                
+                const cleaned = await purifyDOM(raw);
+                stateDB[i] = cleaned;
+                document.getElementById(`card-${i}`).classList.add('success');
+            });
+        }
+
+        function resetCard(index) {
+            stateDB[index] = null;
+            document.getElementById(`card-${index}`).classList.remove('success');
+            document.getElementById(`input-${index}`).value = '';
+            document.getElementById(`input-${index}`).placeholder = "👈 在此点击并按 Ctrl+V 粘贴 F12 代码...";
+        }
+
+        // 🛠️ 新增战术模块：单步复制提取功能
+        function copySingleStep(index) {
+            if (!stateDB[index]) return;
+            const name = document.getElementById(`name-${index}`).value;
+            // 提取单步状态（仅保留局部标记，不带冗长的系统指令）
+            const snippet = `============= [补充局部快照: ${name}] =============\n\`\`\`html\n${stateDB[index]}\n\`\`\`\n`;
+            
+            navigator.clipboard.writeText(snippet).then(() => {
+                const btn = document.getElementById(`single-btn-${index}`);
+                const oldText = btn.innerHTML;
+                btn.innerHTML = "✅ 已复制";
+                btn.style.background = "var(--accent)";
+                btn.style.color = "#fff";
+                setTimeout(() => { 
+                    btn.innerHTML = oldText; 
+                    btn.style.background = "var(--panel)";
+                    btn.style.color = "var(--accent-hover)";
+                }, 2000);
+            });
+        }
+
+        async function purifyDOM(rawHtml) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(rawHtml, 'text/html');
+            const root = doc.body;
+
+            ['meta', 'link', 'noscript', 'canvas', 'video', 'audio', 'iframe', 'script', 'style'].forEach(tag => 
+                doc.querySelectorAll(tag).forEach(el => el.remove())
+            );
+
+            const twRegex = /\b(sm:|md:|lg:|xl:|2xl:|hover:|focus:|active:|group-[a-z]+:)?(flex|grid|hidden|block|inline|absolute|relative|fixed|inset-\S+|w-\S+|h-\S+|m[trblxy]?-\S+|p[trblxy]?-\S+|bg-\S+|text-\S+|border\S*|rounded\S*|shadow\S*|opacity-\S+|z-\S+|gap-\S+|items-\S+|justify-\S+|leading-\S+|font-\S+|tracking-\S+|transition\S*|transform\S*|cursor-\S+|overflow-\S+)\b/g;
+            const keepAttributes = ['id', 'class', 'href', 'src', 'type', 'name', 'value', 'placeholder', 'role'];
+
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, null, false);
+            let node; const nodesToProcess = [];
+            while (node = walker.nextNode()) nodesToProcess.push(node);
+
+            for (let i = 0; i < nodesToProcess.length; i++) {
+                let el = nodesToProcess[i];
+                if (el.nodeType === Node.TEXT_NODE) {
+                    el.nodeValue = el.nodeValue.replace(/\s+/g, ' ').trim(); 
+                    continue;
+                }
+                if (el.tagName.toLowerCase() === 'svg') {
+                    const rep = doc.createElement('svg'); rep.setAttribute('data-icon', 'svg-placeholder');
+                    el.replaceWith(rep); continue;
+                }
+                if (el.hasAttribute('src') && el.getAttribute('src').startsWith('data:image')) el.setAttribute('src', '[Base64 Omitted]');
+                
+                if (el.hasAttribute('class')) {
+                    let cls = el.getAttribute('class').replace(twRegex, '').replace(/\s+/g, ' ').trim();
+                    if (cls) el.setAttribute('class', cls); else el.removeAttribute('class');
+                }
+                Array.from(el.attributes).forEach(attr => {
+                    if (!keepAttributes.includes(attr.name) && !attr.name.startsWith('data-') && !attr.name.startsWith('aria-')) el.removeAttribute(attr.name);
+                });
+            }
+
+            doc.querySelectorAll('*').forEach(parent => {
+                if (parent.children.length > 3) {
+                    let sigMap = {};
+                    Array.from(parent.children).forEach(child => {
+                        const primaryClass = (child.className || '').split(' ')[0];
+                        let sig = `${child.tagName}.${primaryClass}|${child.children.length}`;
+                        if (!sigMap[sig]) sigMap[sig] = []; sigMap[sig].push(child);
+                    });
+                    Object.values(sigMap).forEach(list => {
+                        if (list.length > 3) {
+                            for (let i = 2; i < list.length; i++) list[i].remove();
+                            list[1].after(doc.createComment(` ✂️ 智能折叠: 剩余 ${list.length - 2} 个相同结构的同级节点已省略 `));
+                        }
+                    });
+                }
+            });
+
+            function pruneEmpty(n) {
+                Array.from(n.children).forEach(pruneEmpty);
+                if (!['img', 'input', 'br', 'hr', 'svg', 'textarea'].includes(n.tagName.toLowerCase()) && n.children.length === 0 && !n.textContent.trim()) {
+                    if (!n.hasAttribute('id') && !n.className && !Array.from(n.attributes).some(a => a.name.startsWith('data-'))) n.remove();
+                }
+            }
+            pruneEmpty(root);
+
+            return root.innerHTML.replace(/\n\s*\n/g, '\n').replace(/ {4,}/g, '  ').trim();
+        }
+
+        function exportToLLM() {
+            const validStates = stateDB.map((html, index) => ({ html, index })).filter(item => item.html);
+            if (validStates.length === 0) {
+                alert("长官，您还没有粘贴任何情报！"); return;
+            }
+
+            const systemPrompt = `[系统最高指令：前端自动化防御与规避法则]
+你现在是一名顶尖的 Playwright 自动化架构专家。请基于下方提供的 DOM 结构时间轴编写代码。
+注意：为了节约你的 Token 并提高你的阅读效率，以下 DOM 是我通过特定算法【极度净化】后的骨架，去除了所有样式垃圾。
+
+在编写 Playwright 定位器时，你必须严格遵守以下 5 大战术法则：
+1. 🛡️ 【动态哈希免疫】：警惕长串无规律字母的乱码属性！严禁写死带有哈希后缀的选择器。必须寻找稳定的 \`data-*\` 属性，或使用模糊匹配 (\`[class*="submit-btn-"]\`)。
+2. 🛡️ 【严格模式防范】：页面中可能存在折叠注释 \`\`。写定位器时必须加上层级限定，或使用 \`.first\` / \`.nth()\` 兜底，绝不能用全局唯一假设。
+3. 🛡️ 【强制破甲点击】：现代网页充满遮罩，涉及点击动作 (\`.click()\`) 时，请务必默认考虑使用 \`force=True\` 暴力破甲。
+4. 🛡️ 【文本漂移防备】：很多发送按钮内部只有 <svg> 而没有文字。优先使用特征类名或结构作为锚点。
+5. ⚠️ 【绝不盲猜法则】：如果你在当前 DOM 中无法找到合理的点击锚点，绝对不要为了完成任务而胡乱编造选择器！请立即停止输出，并回复我：“指挥官，清洗后的 DOM 中无此元素，请直接提供原始源码。”
+
+以下是目标网页在自动化操作流程中的 DOM 快照：\n\n`;
+
+            let finalStr = systemPrompt;
+            validStates.forEach(item => {
+                const name = document.getElementById(`name-${item.index}`).value;
+                finalStr += `============= [流程步骤 ${item.index + 1}: ${name}] =============\n\`\`\`html\n${item.html}\n\`\`\`\n\n`;
+            });
+
+            navigator.clipboard.writeText(finalStr).then(() => {
+                const btn = document.getElementById('exportBtn');
+                btn.innerHTML = "✅ 全部拼装并复制成功！直接去跟大模型对话吧！";
+                btn.style.background = "#2ea043";
+                setTimeout(() => { 
+                    btn.innerHTML = "📋 组装完毕！一键复制给大模型 (附带最强 Prompt)"; 
+                    btn.style.background = "var(--accent)"; 
+                }, 3000);
+            });
+        }
+    </script>
+</body>
+</html>

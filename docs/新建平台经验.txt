@@ -1,0 +1,70 @@
+**[系统指令：新增平台适配器开发规范]**
+
+此规范面向未来的 AI 代码生成器。在为本系统（基于 Playwright 的生图 RPA 架构）编写新的平台子类（如 `xxx_engine.py`）时，**禁止套用常规自动化思维，必须严格继承并复用 `BaseAIEngine` 的底层建筑。** 严格遵守以下脱水版架构法则：
+
+### 1. 基类继承与契约函数
+
+* **强制继承**：新平台必须继承 `BaseAIEngine`。
+* **必须实现**：仅允许且必须覆盖以下 4 个核心生命周期 Hook，禁止改写 `process_single` 主轴流程：
+* `action_init_workspace(self)`：处理账号登录、环境重生、到达生图主页。
+* `action_upload_image(self, payload)`：处理垫图。
+* `action_fill_and_submit(self, payload)`：处理参数装填、打字、点击发送。
+* `action_wait_and_download(self, payload)`：死等渲染、提取 URL、调用下载。
+
+
+
+### 2. UI 交互：禁用 Playwright 原生方法
+
+* **禁止使用**：`page.click()`, `page.fill()`, `page.hover()`。
+* **强制替换**：必须调用基类的 `self._click()`, `self._fill()`, `self._hover()`。
+* *原因*：基类 HIL 方法内置了随机拟人停顿、超时处理和 `force=True` 防遮挡机制。
+
+
+
+### 3. 垫图管线与记忆洗白（核心防抖逻辑）
+
+* **上传调用**：在 `action_upload_image` 中，直接调用 `self._smart_upload(payload, upload_style="input"|"os_dialog")`，基类会自动处理同图复用和防抖。
+* **物理特性判定与大脑洗白（极其重要）**：
+* 如果目标网站“点击发送后，垫图从输入框消失”：必须在 `action_fill_and_submit` 的点击发送动作后，追加 `self.cached_img_path = None` 强行洗白记忆，逼迫下一单重新上传。
+* 如果目标网站“点击发送后，垫图仍保留在输入框”：**严禁**清空 `self.cached_img_path`，交由基类自动触发免上传防抖。
+* 如果存在专属的局部装填逻辑（如 Flow 的 Add to prompt），必须校验幽灵节点，若节点丢失需主动 `self.cached_img_path = None` 触发重传。
+
+
+
+### 4. 参数装配：字典降级与越权
+
+* **标准 UI**：若参数 UI 为简单的下拉菜单，在子类定义 `DEFAULT_PARAMS`, `PARAM_ROUTING`, `PARAM_OPTION_SELECTORS` 字典，基类的 `_set_params_iteratively` 会自动处理。
+* **复杂 UI（优先推荐）**：若参数 UI 需要特殊交互（如弹窗、滑块、按 ESC 收起），**直接在子类重写 `_set_params_iteratively**`。直接写死 `self._click()` 序列，放弃基类的通用字典逻辑，代码更直观耐操。
+
+### 5. 图鉴追踪与黑名单过滤器
+
+* **禁止用 is_visible 查图**：长列表或连发会使元素滚出视口。必须用 `evaluate_all` 直接读取内存 DOM 的 `data-tile-id` 或 `src`。
+* **调用全局黑名单**：提取气泡中的图片 URL 时，严禁自己写正则。必须将 Locator 传给基类的 `self._extract_valid_image_url(image_locators)`，基类会拦截所有 Loading、Base64 和本地 Blob 占位图，返回唯一的纯净 HTTPS 链接。
+
+### 6. 下载器收口（Eagle 同步）
+
+* **禁止自写 requests/文件保存**：拿到合法图片节点或 URL 后，必须使用基类提供的两种下载器，否则将丢失异步打标功能。
+* 有真实下载按钮的：调用 `self.download_via_browser(locator, save_path, payload, fname)`。
+* 只能拿 URL 裸下的：调用 `self.download_via_network(url, save_path, payload, fname)`。
+
+
+* 目录生成统一调用 `self._get_download_dir(payload)`。
+
+### 7. 异常分级与熔断边界（严禁滥用 try-except）
+
+* **软性放行（不影响出图的旁路动作）**：配参数、清弹窗、辅助悬停。使用 `try: ... except Exception: pass`。记录日志后继续往下走，不能阻断流水线。
+* **致命抛出（物理状态死锁）**：出图超时、发送按钮持续禁用、被平台风控提示。**绝对禁止内部消化**，必须 `raise Exception("...")`。异常会击穿至调度层，触发当前标签页销毁与 `setup()` 重启。
+
+### 8. 物理层防御：DOM 闪烁抗性
+
+* 在轮询非稳定性属性（如 `is_disabled()`、新节点属性）时，由于前端框架重绘，必定高频触发 `Element is not attached to the DOM`。
+* **标准防御范式**：
+```python
+while time.time() - start < MAX_WAIT:
+    try:
+        if target.is_disabled(): break
+    except Exception:
+        pass # 吸收瞬时脱离报错
+    time.sleep(1)
+
+```

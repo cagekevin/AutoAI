@@ -1,0 +1,1 @@
+javascript:(function(){document.querySelectorAll('*').forEach(e=>e.style.outline='1px solid #'+Math.floor(Math.random()*16777215).toString(16));})();
