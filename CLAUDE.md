@@ -42,6 +42,7 @@ G:\AutoAI_01\
 - **阅读/分析**代码、日志、DOM 情报
 - **整理**非业务文件（移动 `tools/`、`docs/` 里的工具和文档）
 - **修 bug**、性能调优、选择器失效排查
+- **自主抓取 DOM 情报**：通过 CDP 连 9222 浏览器，只读方式读取页面 DOM、提取选择器、抓净化 HTML（**只允许读，不允许主动点击/提交/破坏用户页面状态**）
 
 ### ⛔ 红线：改代码必须确认
 > **凡是涉及修改引擎业务逻辑代码的（不只是选择器），必须先向用户讲清楚"改什么、为什么改、怎么改"，等用户明确同意后再动手。**
@@ -62,21 +63,94 @@ G:\AutoAI_01\
 
 网站前端经常改版导致选择器失效。**永远不要凭空编造选择器**！必须基于真实抓到的 DOM。
 
-### 抓取工具
-项目里有专门的抓 DOM 工具（在 `tools/第一步获取数据/`）：
-- **`油猴清洗.js`**：Tampermonkey 油猴脚本，页面上注入两个悬浮按钮
-  - **🌐 全局提取**：抓整个页面净化后的 DOM（右上角按钮）
-  - **🎯 局部狙击**：开启后鼠标高亮目标元素，点击即抓该元素的净化 HTML
+### 抓取方式一：AI 自主抓取（首选，推荐）
+
+> 这是本项目的**首选方案**。AI 可以直接通过 CDP 连到正在运行的浏览器（9222 端口，带登录态），自主读取 DOM、找选择器，**无需用户手动操作浏览器**。
+
+**原理**：本项目 Chrome 由 `启动控制台.bat` 用 `--remote-debugging-port=9222` 启动，天然暴露 CDP 接口。AI 用 Playwright 的 `connect_over_cdp("http://127.0.0.1:9222")` 接管，直接执行 JS 读取页面 DOM、提取选择器、抓净化 HTML。
+
+**AI 自主抓包 SOP（写进 AI 的操作流程）：**
+
+1. **连接现有浏览器**（复用，不新开，保持登录态）：
+   ```python
+   from playwright.sync_api import sync_playwright
+   pw = sync_playwright().start()
+   browser = pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
+   context = browser.contexts[0]
+   # 找目标页（用 URL 认路，别用 pages[-1]）
+   page = next((p for p in context.pages if "lovart.ai" in p.url), None)
+   if page: page.bring_to_front()
+   ```
+
+2. **读取整页净化 DOM**（套用油猴 `purifyDOM` 的清洗逻辑）：
+   ```python
+   html = page.content()
+   # 用正则/BeautifulSoup 剥离 script/style/svg 等，只留 data-testid/href/src 等关键属性
+   ```
+
+3. **精准提取单个元素**（读指定选择器结构）：
+   ```python
+   # 例：看模型下拉菜单里有哪些选项、它们的 testid
+   nodes = page.locator('[role="menuitem"]').evaluate_all(
+       "els => els.map(e => ({text: e.innerText, testid: e.getAttribute('data-testid')}))")
+   ```
+
+4. **穿透 Shadow DOM / iframe**（复杂 React 组件用 eval 递归遍历）：
+   ```python
+   # 递归穿透所有 shadowRoot / contentDocument，拿到带标签的结构
+   page.evaluate("""() => {
+     const out = [];
+     const walk = (root) => {
+       root.querySelectorAll('*').forEach(el => {
+         if (el.shadowRoot) walk(el.shadowRoot);
+         if (el.tagName === 'IFRAME') { try { walk(el.contentDocument); } catch(e){} }
+       });
+     };
+     walk(document);
+     return out;
+   }""")
+   ```
+
+5. **把抓到的净化 HTML 与现有 `UI` 字典比对**，判断选择器是否失效、如何更新。
+
+**现成工具 `tools/dom_sniffer.py`（推荐直接用）**：
+AI 可直接运行这个封装好的工具，一行命令抓 DOM，无需手写连接逻辑：
+```bash
+# 在 G:\AutoAI_01 下（venv python）：
+python tools/dom_sniffer.py                                    # 抓当前站整页净化 DOM
+python tools/dom_sniffer.py --url lovart.ai                    # 抓指定站点匹配页
+python tools/dom_sniffer.py --selector '[data-testid="xxx"]'   # 提取指定元素结构（含 testid）
+python tools/dom_sniffer.py --find "Nano Banana"               # 搜含该文本的元素 + 父级锚点链
+python tools/dom_sniffer.py --find "参考图" --depth 3          # 找上传按钮锚点
+# —— 展开下拉菜单后再抓（应对 hover/click 才弹出的菜单）——
+python tools/dom_sniffer.py --open '[data-testid="agent-mode-switch-trigger"]' --open-action click --find "图像"
+python tools/dom_sniffer.py --open '.menu-trigger' --open-action hover --find "2K"
+```
+- `--find` 是**找选择器神器**：输入你想点的按钮文案，它返回该元素及其父级链的 testid/class/id，直接就能看出用哪个锚点。
+- `--open` 专治**点击/hover 才弹出的下拉菜单**：先展开触发器，再抓弹出来的选项。`--open-action` 选 `click` 或 `hover`（Radix 等组件常用 hover）。
+- 默认**只读**；`--open` 仅做展开菜单的轻量交互（不提交/不改值/不导航）。
+- 前提：Chrome 已带 9222 启动（`启动控制台.bat` 会做）。若报 `ECONNREFUSED`，提示用户先启动项目。
+
+**本项目已有的辅助脚本**：`tools/engine_ide.py`、`tools/工具/adapter_*.py` 里有现成的 CDP 连接、DOM 提取、`execute_action` 路由逻辑，AI 可参考或复用其模式。
+
+---
+
+### 抓取方式二：用户手动抓取（备用，需用户配合）
+
+当 AI 无法自主连到浏览器（如浏览器未开 9222、或需要用户特定操作）时，用这套人工流程：
+
+#### 抓取工具
+- **`油猴清洗.js`**（`tools/第一步获取数据/`）：Tampermonkey 脚本，页面注入两个悬浮按钮
+  - **🌐 全局提取**：抓整页净化 DOM
+  - **🎯 局部狙击**：鼠标高亮目标元素，点击抓该元素的净化 HTML
 - **`Cookie 极速提取器.txt`**：bookmarklet，一键复制网站 Cookie
 - **`网页清洗.html`**：DOM 净化舱
 
-### 抓取流程
-1. **装油猴脚本**：把 `油猴清洗.js` 装进 Tampermonkey（刷新目标网页后右上角出现按钮）
-2. **定位目标**：在 Lovart 等目标网页，按需抓取
-   - 抓**整页骨架** → 点"🌐 全局提取"
-   - 抓**某个具体元素/下拉菜单** → 点"🎯 局部狙击"后点目标
-3. **导出情报**：自动下载 `情报_*.txt`，内容含净化 HTML + 给 AI 的系统提示词
-4. **把情报内容贴给 AI**，由 AI 与现有选择器比对，判断是否失效、如何更新
+#### 抓取流程
+1. 装油猴脚本（刷新目标网页后右上角出现按钮）
+2. 抓**整页** → 点"🌐 全局提取"；抓**单个元素/下拉菜单** → 点"🎯 局部狙击"后点目标
+3. 自动下载 `情报_*.txt`（含净化 HTML + 给 AI 的系统提示词）
+4. 用户把 txt 内容贴给 AI，AI 与现有选择器比对
 
 ### 目标元素清单（Lovart 为例，常抓这 5 大模块）
 1. **新建项目按钮** → 主页卡片
@@ -84,6 +158,25 @@ G:\AutoAI_01\
 3. **参数面板**（比例/分辨率/模型）→ 触发按钮 + 下拉菜单选项
 4. **垫图上传** → 上传按钮 + 上传菜单/input
 5. **发送/收割** → 输入框 + 发送按钮 + 生成后的气泡/图片
+
+### AI 找选择器：从 DOM 到稳定定位的决策链
+
+拿到净化 HTML 后，按这个顺序判断用哪个锚点（也是给 AI 的执行规则）：
+
+1. **先找 `data-testid`** —— 有就直接用（如 `[data-testid="agent-mode-switch-option-image"]`）。这是最稳的。
+2. **没 testid**，找稳定的 `id` / 唯一 `class`（如 `#agent-image-generator-prompt`）。
+3. **只有文字**：用 `:has-text("文案")` 模糊包含 + 判断是否唯一。**若文案会撞车**（短词、数字、含子串关系），必须配 testid 或属性。
+4. **判断作用域**：
+   - 目标是"点开面板的按钮"还是"面板里的选项"？路径要分清（先点触发器，再选选项）。
+   - 元素在 Shadow DOM / iframe 里吗？在的话要用 eval 穿透取结构，或确认 Playwright 能否直接命中选择器。
+5. **判断唯一性**：页面同 testid 有多个时（如多个气泡、多个按钮），想清楚用 `.first` 还是 `.last`。
+
+**AI 自主抓包的自我检查**：
+- 抓到的选择器**是从真实 DOM 里读出来的**，不是 AI 自己编的。
+- 关键交互（模式切换、参数面板、上传、发送）都验证过元素存在且可见。
+- 若某个元素抓不到，**不要瞎猜**——把抓到的净化 HTML 和相关上下文反馈给用户，请求补充情报。
+
+---
 
 ### 选择器设计原则（来自实战文档）
 
