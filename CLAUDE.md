@@ -20,10 +20,10 @@ Python + Playwright + FastAPI 的多平台 AI 绘画自动化控制中心，通�
 ## 二、项目目标与 AI 角色定位（最重要）
 
 > **最终形态 = 批量重复挂机产图**：引擎一键跑通某平台流水线，调度器批量投喂任务，浏览器日夜挂机收割。
-> **AI 不是产图机器，是探路者**：核心交付物不是"让 webctl 一键出图"，而是**把平台的 DOM 探清楚、每个交互验证成稳定选择器、写进引擎 `UI` 字典和 `action_*` 钩子**，让引擎能稳定重复执行。挂机是引擎的事，探路和落选择器是 AI 的事。
+> **AI 不是产图机器，是探路者**：核心交付物不是"一键出图"，而是**把平台的 DOM 探清楚、每个交互验证成稳定选择器、写进引擎 `UI` 字典和 `action_*` 钩子**，让引擎能稳定重复执行。挂机是引擎的事，探路和落选择器是 AI 的事。
 
 ### 2.1 AI 的职责
-- **探路**：用 `tools/webctl.py` 连 9222 浏览器，走通"认路→摸结构→找锚点→展开菜单→点击验证"闭环。
+- **探路**：用 `tools/browser_harness` 框架连 9222 浏览器，走通"认路→摸结构→找锚点→展开菜单→点击验证"闭环。
 - **落选择器**：把验证过的选择器写回引擎 `UI` 字典、`PARAM_OPTION_SELECTORS`、`PARAM_ROUTING`、`action_*` 钩子。
 - **巡检**：引擎失效时（改版/条件渲染变化）重新探路、更新选择器。
 - **不做的**：不追求一键产图（`flow` 仅探路辅助）；不每次手动点；不凭空编选择器。
@@ -37,7 +37,7 @@ Python + Playwright + FastAPI 的多平台 AI 绘画自动化控制中心，通�
 - **新建项目**：`new_proj_btn` + `URL`/`URL_HOME`/`URL_CANVAS`
 - **弹窗清理**：`popups`；四个 `action_*` 钩子里的具体选择器
 
-> 探路时就要想：这选择器对应引擎哪个 key？在引擎 HIL 下（`_click` = `wait_for(visible)` + `click(force=True)`，取 `.first`/`.last`）会不会失效？**要经得起引擎式点击，而不是只在 webctl 里看着命中。**
+> 探路时就要想：这选择器对应引擎哪个 key？在引擎 HIL 下（`_click` = `wait_for(visible)` + `click(force=True)`，取 `.first`/`.last`）会不会失效？**要经得起引擎式点击，而不是只在探路里看着命中。**
 
 ### 2.3 探路产出清单
 - [ ] `UI` 字典各 key 选择器都基于真实 DOM
@@ -113,16 +113,8 @@ cmd /c "cd /d g:\AutoAI_01\tools\browser_harness\src && set BU_CDP_URL=http://12
 - 探路脚本写法：先 `ensure_daemon()`，然后可用 `page_info()`/`list_tabs()`/`js("...")`/`wait_for_element(sel, timeout, visible)`/`click_at_xy(x,y)`/`capture_screenshot()`/`fill_input`/`press_key`/`wait` 等辅助函数（详见 `tools/browser_harness/agent-workspace/agent_helpers.py` 与 SKILL.md）。
 - **核心铁律：先截图看页面 → 用 js() 抓真实 DOM/testid → 再点击交互 → 每次操作后重新验证**。别凭空编选择器。
 
-#### 方式一·辅助：webctl（通用浏览器控制台）
-`tools/webctl.py` 保留为**快速交互/锚点收集的辅助工具**（不做首选）：
-```bash
-python tools/webctl.py                                   # 交互式
-python tools/webctl.py --run "page|buttons|find 新建项目|quit"   # 脚本化，命令用 | 分隔
-```
-常用命令：`open`/`page`/`nav`/`buttons`/`find <文本>`/`open-menu <sel> [click|hover]`/`click <选择器|文本>`/`probe <sel>`/`state <sel>`/`verify <sel>[;sel...]`/`wait <sel>`/`type`/`upload`/`frames`/`frame <n> <cmd>`/`shadow`/`js`/`tabs`/`tab <n>`/`ui`/`anchor`/`esc`/`clear`/`coord`/`shot`/`waitimg <sel> <张数>`/`getimg <sel>`/`html`/`help`/`quit`。
-
-#### 直接 Playwright connect_over_cdp（备用）
-框架/工具都不顺手时，才直接写 Playwright：
+#### 方式二：直接 Playwright connect_over_cdp（备用）
+框架不顺手时，才直接写 Playwright：
 ```python
 from playwright.sync_api import sync_playwright
 pw = sync_playwright().start()
@@ -136,19 +128,18 @@ if page: page.bring_to_front()
 ### 高效探路：锚点记忆，迭代复用（务必遵守）
 > **这是探路的正确姿势，避免每次从头绕圈。** 网页会改版，但**切对模式后参数按钮（比例/模型/风格/上传/发送）是稳定不变的**。找到稳定锚点后**记录下来，下次直接复用**，探路就是"迭代"而非"重来"。
 
-1. **先 `ui` 一次性收集锚点**：切对模式后，用 webctl 的 `ui` 命令扫描当前页，收集可见可交互元素的稳定锚点（自动生成 `button:has-text("比例")` 这种选择器）。
-2. **持久化复用**：`ui`/`anchor` 会把锚点存到 `tools/.webctl_anchors.json`，下次启动自动加载。之后直接按锚点名操作：`click 比例`、`open-menu 模型`、`state 风格`、`wait 发送`，不用再写完整选择器。
-3. **锚点失效（改版）才重探**：某锚点命中 0，先走排查纪律（前置条件），确认改版后重新 `ui` 收集覆盖。
-4. **手动补锚点**：`anchor <名称> <选择器>`。
-5. **动态锚点别用**：Radix 等框架生成的 `id=:r3f:` 每次渲染变，不可靠；用文本 `:has-text()` 锚定。`_norm_selector` 已自动处理 `:has-text(中文)` 缺引号和 id 冒号转义。
+1. **切对模式后，用 browser-harness 的 `js()` 一次性收集锚点**：扫描当前页可见可交互元素的稳定 testid/文本（`button:has-text("比例")` 这种），批量抓出后整理成锚点清单。
+2. **记录到引擎 `UI` 字典 / 锚点清单文件**：把验证过的稳定锚点持久化（如项目 `ui_anchors/` 目录或引擎 UI 字典），下次探路直接复用，不用重抓。
+3. **锚点失效（改版）才重探**：某锚点命中 0，先走排查纪律（前置条件），确认改版后重新抓取覆盖。
+4. **动态锚点别用**：Radix 等框架生成的 `id=:r3f:` 每次渲染变，不可靠；优先用稳定 `data-testid` 或文本锚定。
 
-**单命令工具 `tools/dom_sniffer.py`**（一次性抓取）：
+**单命令工具 `tools/dom_sniffer.py`**（一次性抓取，独立于框架，可保留）：
 ```bash
 python tools/dom_sniffer.py --find "Nano Banana"
 python tools/dom_sniffer.py --selector '[data-testid="xxx"]'
 python tools/dom_sniffer.py --open '触发器' --open-action click --find "图像"
 ```
-- 连贯操作用 webctl；只抓单个选择器用 dom_sniffer。两者都集成 `win_utf8` 处理中文乱码。
+- 轻量单点抓取可用 dom_sniffer；连贯探路一律用 browser-harness。
 
 ### 方式二：用户协助提供 DOM（备用）
 AI 无法连浏览器时，用户装 `油猴清洗.js`（`tools/第一步获取数据/`）抓整页/局部净化 DOM，或用 `Cookie 极速提取器.txt`、`网页清洗.html`，下载 `情报_*.txt` 贴给 AI 比对。
@@ -229,7 +220,7 @@ Ant Design 等不会把真实 `input[type=file]` 写死，直接 `set_input_file
 ---
 
 ## 八、快速自查清单（改引擎前过一遍）
-- [ ] 探路结果沉淀成引擎选择器了吗？（落进 `UI`/`PARAM_OPTION_SELECTORS`/`action_*`，不是只在 webctl 看过）
+- [ ] 探路结果沉淀成引擎选择器了吗？（落进 `UI`/`PARAM_OPTION_SELECTORS`/`action_*`，不是只在探路时看过）
 - [ ] 关键交互选择器在引擎式点击下实测验证过吗？（`.first`/`.last`/遮挡/动画）
 - [ ] 选择器基于真实抓取的 DOM，还是我编的？
 - [ ] 要改的是代码逻辑还是选择器？逻辑必须确认。
