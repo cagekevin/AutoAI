@@ -30,7 +30,7 @@ Python + Playwright + FastAPI 的多平台 AI 绘画自动化控制中心，通�
 
 ### 2.2 探路 ↔ 引擎 UI 字典对应（心智模型）
 探路产出的每个选择器，都要落到引擎消费它的 key（`base_engine.py` 通过 `self.UI["xxx"]` 读）：
-- **模式切换**：`mode_btn`、`mode_option`
+- **模式切换**：`mode_btn`、`mode_option`——**两种形式**：下拉切换型要 `mode_option`（菜单选项）；直接点击型没有 `mode_option`（点 `mode_btn` 本身即切换）。探路先 `state mode_btn` 看当前模式。
 - **参数面板**：`param_panel_trigger`、`PARAM_OPTION_SELECTORS`、`PARAM_ROUTING`、`defocus_area`
 - **垫图**：`upload_input`/`upload_btn`/`local_upload_option`/`close_preview_btn`
 - **输入/安检**：`input_box`（`_security_check` 靠它判登录态）
@@ -50,7 +50,10 @@ Python + Playwright + FastAPI 的多平台 AI 绘画自动化控制中心，通�
 > **这是所有站点共用的标准操作顺序**，AI 探路时按它走通每一步，落选择器时也按它组织 `action_*`。**顺序不能乱，漏一步后面全白搭。**
 
 1. **（可选）新建项目**：部分站点（Lovart 等）要先从主页点"新建项目"进工作台，参数面板/上传才可用。
-2. **切模式**：先选【图像生成】模式（部分站点默认就是图像，可跳过）。未切模式，参数/上传/出图都不存在。
+2. **切模式**：先选【图像生成】模式（部分站点默认就是图像，可跳过）。未切模式，参数/上传/出图都不存在。**切模式有两种形式，探路时要分清是哪种**：
+   - **下拉切换型**（如 Lovart）：点 `mode_btn` 展开下拉菜单 → 菜单里选目标模式选项（对应 `mode_option`）。
+   - **直接点击型**（部分站点）：模式按钮/入口本身就可见，**直接点击就是切换**，没有下拉菜单，`mode_option` 不存在。别硬找下拉选项。
+   - 探路时先 `state mode_btn` 看当前模式，再点开看有没有下拉；**别默认一定是下拉**。
 3. **选参数**：比例/分辨率（如 16:9、1k/2k 清晰度）等。要点开下拉→选目标项。
 4. **选模型**：模型下拉（如 Seedream 4.5）。点开→选目标模型。
 5. **输提示词**：往输入框打字（发送按钮随输入渲染，填字后才可点）。
@@ -77,7 +80,7 @@ Python + Playwright + FastAPI 的多平台 AI 绘画自动化控制中心，通�
 
 ### ⚠️ 排查纪律：选择器命中 0，先怀疑前置条件
 **永远先怀疑前置条件，别急着改选择器：**
-1. 切对模式了吗？（未切"图像生成"，参数面板/上传/出图都不存在）
+1. 切对模式了吗？（未切"图像生成"，参数面板/上传/出图都不存在）——**切模式可能是下拉切换，也可能直接点击模式按钮就是切换**，先 `state` 看当前模式，别默认是下拉。
 2. 点开面板了吗？（参数选项在下拉菜单里，没展开当然命中 0）
 3. 登录了吗？（未登录锁工作台，面板不渲染）
 4. 填字了吗？（发送按钮随输入渲染）
@@ -97,32 +100,38 @@ Python + Playwright + FastAPI 的多平台 AI 绘画自动化控制中心，通�
 > 探路 = **抓 DOM（摸结构）+ 点击验证（确认引擎下能用）**。只抓不点，验证不了交互；只点不抓，就是瞎点。**永远不要凭空编选择器**，必须基于真实 DOM 且关键交互实测点击验证。
 
 ### 方式一：AI 自主探路（首选）
-Chrome 由启动脚本带 `--remote-debugging-port=9222` 启动，AI 用 Playwright `connect_over_cdp` 直接接管（复用登录态），无需用户操作。
+Chrome 由启动脚本带 `--remote-debugging-port=9222` 启动，AI 直接接管（复用登录态），无需用户操作。
 
-**SOP：**
-1. **连接现有浏览器**（用 URL 认路，别用 `pages[-1]`）：
-   ```python
-   from playwright.sync_api import sync_playwright
-   pw = sync_playwright().start()
-   browser = pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
-   context = browser.contexts[0]
-   page = next((p for p in context.pages if "目标站" in p.url), None)
-   if page: page.bring_to_front()
-   ```
-2. **抓净化 DOM**：`html = page.content()`，剥掉 script/style/svg，只留 data-testid/href/src 关键属性。
-3. **精准提元素**：`page.locator('[role="menuitem"]').evaluate_all("els => els.map(e => ({text:e.innerText, testid:e.getAttribute('data-testid')}))")`
-4. **穿透 Shadow DOM/iframe**（复杂 React 用 eval 递归遍历 shadowRoot/contentDocument）。
-5. **点击验证（关键）**：用 webctl 的 `click`/`open-menu`/`type` 对锚点做轻量交互，确认在引擎式点击下真能命中、展开；验证完 Esc/盲点还原。
-6. **比对 `UI` 字典**：确认选择器对应引擎哪个 key（见 2.2）。
+#### ⭐ 首选框架：browser-harness（成熟框架，禁止重复造轮子）
+> **浏览器操作一律以 browser-harness 框架为主**（已搬入 `tools/browser_harness/`，见 `tools/browser_harness/SKILL.md` 与 `install.md`）。它提供坐标点击（穿透 iframe/Shadow DOM）、截图驱动探路、任意 JS 执行、元素等待、受控输入填充、CDP 文件上传等成熟能力，**别再自己写 Playwright 探路脚本/再造工具**。
 
-**首选工具 `tools/webctl.py`（通用浏览器控制台）**：像操作浏览器一样一条条命令操作，走完探路闭环，不用写 Playwright 代码。
+**运行方式（必须用 cmd 重定向喂 stdin，别用 PowerShell 管道——会插入 BOM 导致语法错误）：**
+```bash
+# 在 src 目录下，stdin 喂 Python 代码，BU_CDP_URL 指向项目 Chrome
+cmd /c "cd /d g:\AutoAI_01\tools\browser_harness\src && set BU_CDP_URL=http://127.0.0.1:9222 && g:\AutoAI_01\venv\Scripts\python.exe -m browser_harness.run < 探路脚本.py"
+```
+- 探路脚本写法：先 `ensure_daemon()`，然后可用 `page_info()`/`list_tabs()`/`js("...")`/`wait_for_element(sel, timeout, visible)`/`click_at_xy(x,y)`/`capture_screenshot()`/`fill_input`/`press_key`/`wait` 等辅助函数（详见 `tools/browser_harness/agent-workspace/agent_helpers.py` 与 SKILL.md）。
+- **核心铁律：先截图看页面 → 用 js() 抓真实 DOM/testid → 再点击交互 → 每次操作后重新验证**。别凭空编选择器。
+
+#### 方式一·辅助：webctl（通用浏览器控制台）
+`tools/webctl.py` 保留为**快速交互/锚点收集的辅助工具**（不做首选）：
 ```bash
 python tools/webctl.py                                   # 交互式
 python tools/webctl.py --run "page|buttons|find 新建项目|quit"   # 脚本化，命令用 | 分隔
 ```
-常用命令：`open`/`page`/`nav`/`buttons`/`find <文本>`（找锚点链）/`open-menu <sel> [click|hover]`/`click <选择器|文本>`/`probe <sel>`（引擎式点击模拟）/`state <sel>`/`verify <sel>[;sel...]`/`wait <sel>`（等条件渲染）/`type`/`upload`/`frames`/`frame <n> <cmd>`/`shadow`/`js`/`tabs`/`tab <n>`/`ui`/`anchor`/`esc`/`clear`/`coord`/`shot`/`waitimg <sel> <张数>`/`getimg <sel>`（下载真图）/`html`/`help`/`quit`。
-- `find` 是找锚点神器（返回 testid/class/id 父级链）；`state`/`verify` 是验证神器；`probe` 模拟引擎式点击（点后报告 DOM 变化）。
-- 默认读为主 + 轻量交互验证；`--run` 用 `|` 分隔，`verify` 内用 `;` 分隔；复杂引号/JS 用交互式。
+常用命令：`open`/`page`/`nav`/`buttons`/`find <文本>`/`open-menu <sel> [click|hover]`/`click <选择器|文本>`/`probe <sel>`/`state <sel>`/`verify <sel>[;sel...]`/`wait <sel>`/`type`/`upload`/`frames`/`frame <n> <cmd>`/`shadow`/`js`/`tabs`/`tab <n>`/`ui`/`anchor`/`esc`/`clear`/`coord`/`shot`/`waitimg <sel> <张数>`/`getimg <sel>`/`html`/`help`/`quit`。
+
+#### 直接 Playwright connect_over_cdp（备用）
+框架/工具都不顺手时，才直接写 Playwright：
+```python
+from playwright.sync_api import sync_playwright
+pw = sync_playwright().start()
+browser = pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
+context = browser.contexts[0]
+page = next((p for p in context.pages if "目标站" in p.url), None)
+if page: page.bring_to_front()
+```
+穿透 Shadow DOM/iframe、抓净化 DOM、精准提元素等参考框架的 helpers 实现（`js()`/`click_at_xy` 思路），别重复造。
 
 ### 高效探路：锚点记忆，迭代复用（务必遵守）
 > **这是探路的正确姿势，避免每次从头绕圈。** 网页会改版，但**切对模式后参数按钮（比例/模型/风格/上传/发送）是稳定不变的**。找到稳定锚点后**记录下来，下次直接复用**，探路就是"迭代"而非"重来"。

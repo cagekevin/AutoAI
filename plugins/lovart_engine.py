@@ -53,9 +53,9 @@ class LovartEngine(BaseAIEngine):
     UI = {
         "new_proj_btn": 'a[data-testid="lovart-nav-create-project"], a[href*="newProject=true"]:visible',
         "mode_btn": 'button[data-testid="agent-mode-switch-trigger"]',
-        "mode_option": '[data-testid="agent-mode-switch-option-image"], [data-testid="agent-mode-switch-option-agent"]', 
+        "mode_option": '[data-testid="agent-mode-switch-option-image"], [data-testid="agent-mode-switch-option-agent"], [data-testid="agent-mode-switch-option-chat"]', 
         "param_panel_trigger": 'button[data-testid="agent-image-generator-multi-params-button"]',
-        "model_btn": 'button[data-testid="generator-model-button"]',  
+        "model_btn": 'button[data-testid="generator-model-button"], button[data-testid="agent-generator-model-button"]',  
         "defocus_area": '#agent-chat-title',  
         "upload_btn": '.no-scrollbar div[aria-haspopup="dialog"]:has-text("参考图")',
         "local_upload_option": 'span.lo-menu-item-text:has-text("从本地上传图片"), button:has-text("从本地上传")',
