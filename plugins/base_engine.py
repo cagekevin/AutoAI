@@ -431,29 +431,23 @@ class BaseAIEngine:
                 time.sleep(1)
         self.context = self.browser.contexts[0]  
         
-        self._log("👉 [基建] 正在寻址或部署工作阵地...")
-        target_url = getattr(self, 'URL_CANVAS', getattr(self, 'URL', ""))
-        clean_url = target_url.replace("*", "").split("?")[0] if target_url else "UNKNOWN"  
-        target_page = next((p for p in self.context.pages if clean_url in p.url), None)  
+        self._log("👉 [基建] 正在部署工作阵地...")
+        # 🌟 [实测验证] CDP 连接下，复用已有页面无论 bring_to_front/goto 都无法把 Chrome 窗口带到前台，
+        # 只有 new_page() 新建页面 + goto 才能让窗口真实弹出、让用户肉眼看到引擎在干活。
+        # teardown() 会关闭工作页，因此每次 setup 新建页不会堆积标签。
+        self.page = self.context.new_page()
+        self.page.bring_to_front()
+        try: self.page.evaluate("window.onbeforeunload = null")  
+        except: pass
         
-        if target_page and not getattr(self, 'FORCE_NEW_PAGE', False):
-            self.page = target_page
-            try: self.page.bring_to_front()
-            except: pass
-        else:
-            self.page = self.context.new_page() if getattr(self, 'FORCE_NEW_PAGE', False) else (self.context.pages[0] if len(self.context.pages) > 0 else self.context.new_page())
-            self.page.bring_to_front()
-            try: self.page.evaluate("window.onbeforeunload = null")  
-            except: pass
-            
-            home_url = getattr(self, 'URL_HOME', getattr(self, 'URL', ""))
-            if home_url: self.page.goto(home_url, timeout=60000)  
-            
-            if hasattr(self, 'UI') and "new_proj_btn" in self.UI:
-                self._click(self.UI["new_proj_btn"])  # 🌟 已替换为 HIL
-                if hasattr(self, 'URL_CANVAS'):
-                    self.page.wait_for_url(self.URL_CANVAS, timeout=30000)  
-            time.sleep(3)  
+        home_url = getattr(self, 'URL_HOME', getattr(self, 'URL', ""))
+        if home_url: self.page.goto(home_url, timeout=60000)  
+        
+        if hasattr(self, 'UI') and "new_proj_btn" in self.UI:
+            self._click(self.UI["new_proj_btn"])  # 🌟 已替换为 HIL
+            if hasattr(self, 'URL_CANVAS'):
+                self.page.wait_for_url(self.URL_CANVAS, timeout=30000)  
+        time.sleep(3)  
         
         self._security_check()  
 
@@ -491,6 +485,8 @@ class BaseAIEngine:
         if getattr(self, 'page', None):
             try: 
                 self.page.evaluate("window.onbeforeunload = null")  
+            except: pass
+            try: self.page.close()  # 🌟 关闭本次新建的工作页，配合 setup 每次新建，避免标签页堆积
             except: pass
         if getattr(self, 'browser', None):
             try: self.browser.disconnect()  

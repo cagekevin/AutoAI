@@ -115,6 +115,10 @@ cmd /c "cd /d g:\AutoAI_01\tools\browser_harness\src && set BU_CDP_URL=http://12
 - 探路脚本写法：先 `ensure_daemon()`，然后可用 `page_info()`/`list_tabs()`/`js("...")`/`wait_for_element(sel, timeout, visible)`/`click_at_xy(x,y)`/`capture_screenshot()`/`fill_input`/`press_key`/`wait` 等辅助函数（详见 `tools/browser_harness/agent-workspace/agent_helpers.py` 与 SKILL.md）。
 - **核心铁律：先截图看页面 → 用 js() 抓真实 DOM/testid → 再点击交互 → 每次操作后重新验证**。别凭空编选择器。
 
+> 🚫 **禁令（最高优先级）：探路/验证/交互一律用 browser-harness 框架，禁止自己写独立探路脚本。**
+> harness 里已有的 helper（`js()`/`click_at_xy()`/`fill_input`/`press_key`/`capture_screenshot()`/`wait_for_element` 等）能满足需求，**一律通过 `python -m browser_harness.run` 的 stdin heredoc 形式调用，不许新建 `tools/*.py` 独立脚本、不许自己造轮子、不许绕开框架手写 Playwright 连接逻辑**。
+> 只有 harness 确实没有的能力（如 `page.expect_file_chooser` 这类框架内建的 Playwright API）才允许直接在引擎代码里用，探路阶段一律用 harness。
+
 #### 方式二：直接 Playwright connect_over_cdp（备用）
 框架不顺手时，才直接写 Playwright：
 ```python

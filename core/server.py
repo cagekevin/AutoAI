@@ -49,6 +49,9 @@ class WebSocketLogHandler(logging.Handler):
                 except Exception:
                     pass
 
+# 🛡️ [Fix: 日志健壮性] 在创建文件日志前物理确保 logs 目录存在，杜绝 FileNotFoundError 导致整个服务器无法启动
+os.makedirs("logs", exist_ok=True)
+
 ws_handler = WebSocketLogHandler()
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -89,7 +92,7 @@ class WebhookPayload(BaseModel):
 async def get_index(request: Request):
     with open("config.json", "r", encoding="utf-8") as f:
         config_str = f.read()
-    return templates.TemplateResponse("index.html", {"request": request, "config_str": config_str})
+    return templates.TemplateResponse(request, "index.html", {"config_str": config_str})
 
 @app.get("/api/status")
 async def get_status():

@@ -61,8 +61,8 @@ class LovartEngine(BaseAIEngine):
         "local_upload_option": 'span.lo-menu-item-text:has-text("从本地上传图片"), button:has-text("从本地上传")',
         "input_box": '#agent-image-generator-prompt',
         "submit_btn": '[data-testid="agent-image-generator-submit-button"], [data-testid="agent-send-button"]',
-        "bubble": '.agent-chat-message',
-        "bubble_img": '.agent-chat-image-preview img, img.ant-image-img',
+        "bubble": '[data-testid="agent-message"]',
+        "bubble_img": 'img.object-cover, img.ant-image-img',
         "canvas_clean_img": '.tl-canvas img[src*="{file_id}"]'
     }
 
