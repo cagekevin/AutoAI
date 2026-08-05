@@ -333,10 +333,13 @@ class BaseAIEngine:
             raw_paths.insert(0, single_path)
         # 只保留真实存在的图片
         img_paths = [p for p in raw_paths if p and os.path.exists(p)]
+        if len(img_paths) > 3:
+            self._log(f"   -> ⚠️ 垫图数量 {len(img_paths)} 张超上限，仅取前 3 张。")
         img_paths = img_paths[:3]  # 上限 3 张
 
         if not img_paths:
             # 无垫图：清掉残存的预览与记忆
+            self._log("   -> 🖼️ 本任务无垫图，跳过上传。")
             self._clear_uploaded_preview()
             self.cached_img_paths = []
             self.cached_img_path = None
@@ -368,9 +371,12 @@ class BaseAIEngine:
         if uploaded:
             self.cached_img_paths = uploaded
             self.cached_img_path = uploaded[0]  # 单图兼容字段
+            if len(uploaded) < len(img_paths):
+                self._log(f"      ⚠️ 本批 {len(img_paths)} 张中成功 {len(uploaded)} 张，其余已软性跳过，继续发词。")
         else:
             self.cached_img_paths = []
             self.cached_img_path = None
+            self._log("   -> ⚠️ 垫图整批装载失败或无入口，忽略垫图强制执行放行。")
 
     # ---------------------------------------------------------
     # [武器库 4.5]: 全局通用真实图片嗅探器
