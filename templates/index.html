@@ -76,7 +76,8 @@
         /* 左侧供弹区 */
         .dropzone { border: 2px dashed var(--border); height: 80px; display: flex; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; position: relative; color: #94a3b8; background: var(--bg); transition: 0.2s; text-align: center; }
         .dropzone:hover { border-color: var(--primary); background: #eff6ff; color: var(--primary); }
-        .dz-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #fff; border-radius: 6px; }
+        .dz-previews { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px; background: #fff; border-radius: 6px; }
+        .dz-preview { width: 60px; height: 100%; object-fit: cover; background: #fff; border-radius: 6px; border: 1px solid var(--border); }
         .dz-clear { position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: 11px; }
         
         .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; overflow-y: auto; max-height: 145px; align-content: start; }
@@ -163,10 +164,10 @@
         <div class="day-layout">
             <div class="day-left">
                 <div class="dropzone" ondragover="event.preventDefault()" ondrop="handleDrop(event)" onclick="getE('file-upload').click()">
-                    <span id="dz-text">📁 点击/拖拽</span>
-                    <input type="file" id="file-upload" class="hidden" onchange="if(this.files.length) handleFile(this.files[0])">
-                    <img id="dz-preview" class="dz-preview hidden">
-                    <button id="dz-clear" class="btn btn-danger dz-clear hidden" onclick="clearImg(event)">清除</button>
+                    <span id="dz-text">📁 点击/拖拽 (可多张)</span>
+                    <input type="file" id="file-upload" class="hidden" multiple onchange="handleFiles(this.files)">
+                    <div id="dz-previews" class="dz-previews hidden"></div>
+                    <button id="dz-clear" class="btn btn-danger dz-clear hidden" onclick="clearImg(event)">清除全部</button>
                 </div>
                 <div id="gallery" class="gallery"></div>
             </div>
@@ -211,7 +212,7 @@
     </dialog>
 
     <script>
-        let curImg = "", currentQueue = [];
+        let curImgs = [], currentQueue = [];
         let editingTaskId = ""; // 核心防丢标记：临时存储正在修改的 ID
         let selectedTaskIds = new Set(); // 批量选中的任务集合
         let isBatchEditing = false;      // 面板形态：是否处于批量修改模式
@@ -242,7 +243,7 @@
                     <div class="queue-item" onclick="toggleSelect('${t.task_name}', !event.currentTarget.querySelector('.q-chk').checked)">
                         <input type="checkbox" class="q-chk" value="${t.task_name}" ${selectedTaskIds.has(t.task_name) ? 'checked' : ''} onclick="event.stopPropagation(); toggleSelect('${t.task_name}', this.checked)">
                         <span class="q-idx">${i+1}.</span>
-                        ${t.image_path ? `<img src="/assets/references/${t.image_path.split(/[\\/]/).pop()}" class="q-img">` : '<div class="q-img-txt">TXT</div>'}
+                        ${t.image_path ? `<img src="/assets/references/${t.image_path.split(/[\\/]/).pop()}" class="q-img">` : (t.image_paths && t.image_paths.length ? `<img src="/assets/references/${t.image_paths[0].split(/[\\/]/).pop()}" class="q-img">` : '<div class="q-img-txt">TXT</div>')}
                         <span class="q-text" title="${t.prompt}">${t.prompt}</span>
                         <div class="q-actions">
                             <button class="btn q-btn-edit" style="color:#0ea5e9" onclick="moveToTop('${t.task_name}')">⬆️ 置顶</button>
@@ -301,7 +302,9 @@
             getE('day-amount').value="1";
             
             if(task.engine_params && task.engine_params.aspect_ratio) { getE('day-ratio').value = task.engine_params.aspect_ratio; }
-            if(task.image_path) { selImg(task.image_path); } else { clearImg(); }
+            if(task.image_path) { setImgs([task.image_path]); }
+            else if(task.image_paths && task.image_paths.length) { setImgs(task.image_paths); }
+            else { clearImg(); }
             getE('dlg-day').showModal();
         }
 
@@ -354,12 +357,13 @@
                 finalPrompts.push(...basePrompts);
             }
 
-            // 🚀 万剑归宗：带着统一的新垫图和新比例，将裂变后的舰队全抛给后端
+            // 🚀 万剑归宗：带着统一的新垫图(1-3张)和新比例，将裂变后的舰队全抛给后端
             const selectedRatio = getE('day-ratio').value;
             const res = await fetchAPI('/api/start_day_mode', { 
                 engine: engine(), 
                 prompts: finalPrompts, 
-                image_name: curImg,
+                image_name: curImgs[0] || "",
+                image_names: curImgs,
                 aspect_ratio: selectedRatio,
                 inject_dna: getE('day-inject-dna').checked
             });
@@ -381,35 +385,47 @@
             } 
         }
 
-        // --- 🖼️ 图库与拖拽填装 ---
+        // --- 🖼️ 图库与拖拽填装 (支持 1-3 张) ---
+        const MAX_IMG = 3;
+        function renderPreviews() {
+            const box = getE('dz-previews');
+            box.innerHTML = curImgs.map(f => `<img src="/assets/references/${f}" class="dz-preview" title="${f}">`).join('');
+            box.classList.toggle('hidden', curImgs.length === 0);
+            getE('dz-text').classList.toggle('hidden', curImgs.length > 0);
+            getE('dz-clear').classList.toggle('hidden', curImgs.length === 0);
+        }
         async function fetchGallery() {
             const r = await (await fetch('/api/images')).json();
-            getE('gallery').innerHTML = r.images.map(f => `<img src="/assets/references/${f}" class="${curImg===f?'active':''}" onclick="selImg('${f}')" title="${f}">`).join('');
+            getE('gallery').innerHTML = r.images.map(f => `<img src="/assets/references/${f}" class="${curImgs.includes(f)?'active':''}" onclick="selImg('${f}')" title="${f}">`).join('');
+        }
+        function setImgs(files) {
+            curImgs = (files || []).slice(0, MAX_IMG);
+            renderPreviews();
+            fetchGallery();
         }
         function selImg(f) { 
-            curImg = f; 
-            getE('dz-text').classList.add('hidden'); 
-            getE('dz-preview').src = `/assets/references/${f}`; 
-            getE('dz-preview').classList.remove('hidden'); 
-            getE('dz-clear').classList.remove('hidden'); 
-            fetchGallery(); 
+            if(curImgs.includes(f)) { curImgs = curImgs.filter(x => x !== f); }
+            else if(curImgs.length >= MAX_IMG) { alert(`垫图最多 ${MAX_IMG} 张，请先清除再选`); }
+            else { curImgs.push(f); }
+            renderPreviews(); fetchGallery();
         }
         function clearImg(e) { 
             if(e) e.stopPropagation(); 
-            curImg = ""; 
-            getE('dz-text').classList.remove('hidden'); 
-            getE('dz-preview').classList.add('hidden'); 
-            getE('dz-clear').classList.add('hidden'); 
+            curImgs = []; 
+            renderPreviews(); 
             getE('file-upload').value = ""; // 清空 input 缓存
             fetchGallery(); 
         }
-        async function handleFile(file) {
+        async function handleFiles(files) {
             getE('dz-text').innerText = "极速上传中...";
-            const fd = new FormData(); fd.append('file', file);
-            const res = await (await fetch('/api/upload', {method:'POST', body:fd})).json();
-            if(res.status==='success') { selImg(res.filename); } else { alert("图片上传失败"); getE('dz-text').innerText = "📁 点击或拖拽本地图片到这里"; }
+            for (const file of Array.from(files || []).slice(0, MAX_IMG - curImgs.length)) {
+                const fd = new FormData(); fd.append('file', file);
+                const res = await (await fetch('/api/upload', {method:'POST', body:fd})).json();
+                if(res.status==='success') { selImg(res.filename); } else { alert(`图片 ${file.name} 上传失败`); }
+            }
+            getE('dz-text').innerText = "📁 点击/拖拽 (可多张)";
         }
-        function handleDrop(e) { e.preventDefault(); if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); }
+        function handleDrop(e) { e.preventDefault(); if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); }
 
         // --- ⚙️ 配置中心 ---
         async function saveCfg() { await fetchAPI('/api/save_config', JSON.parse(getE('cfg-text').value)); alert("保存成功"); getE('dlg-cfg').close(); }

@@ -30,17 +30,20 @@ class TaskLedger:
             conn.commit()
             conn.close()
 
-    def _generate_task_id(self, prompt, image_path):
-        """生成唯一任务指纹：提示词 + 垫图路径 的 MD5"""
-        raw_str = f"{str(prompt).strip()}||{str(image_path).strip()}"
+    def _generate_task_id(self, prompt, image_path="", image_paths=None):
+        """生成唯一任务指纹：提示词 + 垫图路径列表 的 MD5（支持 1-3 张多图）"""
+        paths = list(image_paths or [])
+        if image_path and image_path not in paths:
+            paths.insert(0, image_path)
+        raw_str = f"{str(prompt).strip()}||{'|'.join(str(p).strip() for p in paths)}"
         return hashlib.md5(raw_str.encode('utf-8')).hexdigest()
 
-    def check_task_completed(self, prompt, image_path=""):
+    def check_task_completed(self, prompt, image_path="", image_paths=None):
         """
         查账接口：这个任务（同样的提示词+同样的垫图）以前有没有成功跑完过？
         返回: (是否成功: bool, 是哪个引擎跑的: str)
         """
-        task_id = self._generate_task_id(prompt, image_path)
+        task_id = self._generate_task_id(prompt, image_path, image_paths)
         with self.lock:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -52,11 +55,11 @@ class TaskLedger:
                 return True, result[1]
             return False, ""
 
-    def record_task(self, prompt, image_path, status, engine_used):
+    def record_task(self, prompt, image_path, status, engine_used, image_paths=None):
         """
         记账接口：引擎跑完后，无论成功失败，向总台账汇报结果
         """
-        task_id = self._generate_task_id(prompt, image_path)
+        task_id = self._generate_task_id(prompt, image_path, image_paths)
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         with self.lock:

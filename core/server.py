@@ -73,6 +73,7 @@ class DayModeRequest(BaseModel):
     engine: str
     prompts: List[str]
     image_name: str = ""
+    image_names: List[str] = []
     aspect_ratio: str = ""
     inject_dna: bool = False
 
@@ -113,10 +114,13 @@ async def get_queue():
 
 @app.post("/api/start_day_mode")
 def start_day(req: DayModeRequest):
+    # 兼容：image_names 优先（多图），缺省回退到旧的单图 image_name
+    image_names = req.image_names or ([req.image_name] if req.image_name else [])
     success, msg = runner.start_day_queue(
         prompts=req.prompts, 
         site_name=req.engine, 
-        image_name=req.image_name, 
+        image_name=image_names[0] if image_names else "",
+        image_names=image_names,
         aspect_ratio=req.aspect_ratio, 
         inject_dna=req.inject_dna
     )

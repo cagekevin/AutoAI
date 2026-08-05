@@ -78,6 +78,7 @@ class LovartEngine(BaseAIEngine):
             self.project_image_count = 0  
             self.last_params = None      # 🚀 强制失忆：清空参数防抖记忆
             self.cached_img_path = None  # 🚀 强制失忆：清空垫图缓存记忆
+            self.cached_img_paths = []   # 🚀 强制失忆：清空多图垫图缓存记忆
             self._log("   -> ✅ 涅槃成功，全新画布挂载完毕。")
         except Exception as e:
             raise Exception(f"项目涅槃遇阻: {e}")
@@ -226,7 +227,8 @@ class LovartEngine(BaseAIEngine):
             self._click(send_btn) 
             
             # 🚀 子类专属物理同步：Lovart 点击发送后垫图会被平台吃掉，立刻洗白大脑通知父类
-            self.cached_img_path = None 
+            self.cached_img_path = None
+            self.cached_img_paths = []  # 多图垫图一并洗白，下次连发重新上传全部
             
             wait_bubble_start = time.time()
             while time.time() - wait_bubble_start < 40:

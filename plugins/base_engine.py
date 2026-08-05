@@ -41,7 +41,8 @@ GLOBAL_IMAGE_BLACKLIST_REGEX = r'(base64|blob:|loading|placeholder|spinner|/user
 class TaskPayload(TypedDict):
     task_name: str        # 任务唯一标识符（通常含 MD5 哈希防重名）
     prompt: str           # AI 生图提示词
-    image_path: str       # 垫图本地绝对路径（可选）
+    image_path: str       # 垫图本地绝对路径（可选，单图兼容）
+    image_paths: list     # 垫图本地绝对路径列表（可选，1-3 张，多图优先）
     engine_params: dict   # 引擎专属参数集（如 quantity、aspect_ratio、model 等）
     dna_dict: dict        # DNA 元数据字典（用于注入 PNG parameters 字段实现溯源）
     target_site: str      # 目标平台标识（如 "jimeng"、"flow"、"lovart"）
@@ -59,7 +60,8 @@ class BaseAIEngine:
         self.stop_requested = False          # 全局制动标志位（用于紧急中止任务）
         self.resume_event = threading.Event() # 人工放行事件锁（安检失败时阻塞等待人工干预）
         self.consecutive_successes = 0       # 连续成功计数器（用于熔断策略判断）
-        self.cached_img_path = None          # 垫图缓存路径（避免重复上传同一张垫图）
+        self.cached_img_path = None          # 垫图缓存路径（避免重复上传同一张垫图，单图兼容）
+        self.cached_img_paths = []           # 多图垫图缓存路径列表（1-3 张防抖）
         self.last_params = None              # 上次配参快照（用于防抖，相同参数跳过重复点击）
         
         # ================== [Playwright 实例引用] ==================
@@ -285,58 +287,90 @@ class BaseAIEngine:
     # ---------------------------------------------------------
     # [武器库 4]: 双流派通用垫图引擎 (已替换为 HIL，彻底根治过快问题)
     # ---------------------------------------------------------
-    def _smart_upload(self, payload: TaskPayload, upload_style="input"):
-        img_path = payload.get("image_path")
+    def _do_upload_one(self, img_path, upload_style="input"):
+        """单张垫图上传原子动作（平台上传入口在 UI 字典）。
+        返回 True=成功；抛异常由上层捕获做软性放行。
+        """
+        if upload_style == "input" and "upload_input" in self.UI:
+            self.page.locator(self.UI["upload_input"]).first.set_input_files(img_path)
 
-        if not img_path or not os.path.exists(img_path):
-            if getattr(self, 'cached_img_path', None) and hasattr(self, 'UI') and "close_preview_btn" in self.UI:
-                try:
-                    btn = self.page.locator(self.UI["close_preview_btn"]).first
-                    if btn.is_visible(timeout=500): self._click(btn)
-                    self._log("   -> 🧹 清理上一轮残存的垫图面板。")
-                except: pass
-            self.cached_img_path = None  
-            return
-            
-        if not hasattr(self, 'UI'): return
-        
-        if img_path == self.cached_img_path:
-            # 修复 Bug 1：既然触发了防抖复用，绝不能去点击 X 删除按钮
-            self._log("   -> 🧠 触发垫图记忆，保留当前垫图，跳过物理上传。")
-            return
+        elif upload_style == "os_dialog" and "upload_btn" in self.UI:
+            if "local_upload_option" in self.UI:
+                # 🌟 极简 HIL 替换：不再需要满篇的 wait_for 和 sleep，_click 一句话搞定所有微操
+                self._click(self.UI["upload_btn"], index="first")
+                with self.page.expect_file_chooser() as fc:
+                    self._click(self.UI["local_upload_option"], index="first")
+                fc.value.set_files(img_path)
+            else:
+                with self.page.expect_file_chooser() as fc:
+                    self._click(self.UI["upload_btn"], index="first")
+                fc.value.set_files(img_path)
+        return True
 
-        # 修复 Bug 2：如果走到这里，说明要传【新图】。必须先检查并清理【旧图】防止堆叠
-        if getattr(self, 'cached_img_path', None) and "close_preview_btn" in self.UI:
+    def _clear_uploaded_preview(self):
+        """物理清理已上传的垫图预览，为新一批垫图腾出空间。
+        仅当存在旧垫图记忆时才清理（与原单图逻辑一致，避免无垫图任务误点关闭按钮）。"""
+        has_old = getattr(self, 'cached_img_path', None) or getattr(self, 'cached_img_paths', [])
+        if has_old and hasattr(self, 'UI') and "close_preview_btn" in self.UI:
             try:
                 btn = self.page.locator(self.UI["close_preview_btn"]).first
-                if btn.is_visible(timeout=500): 
+                if btn.is_visible(timeout=500):
                     self._click(btn)
-                    self._log("   -> 🧹 已物理清理上一单的旧垫图，为新图腾出空间。")
+                    self._log("   -> 🧹 已物理清理上一批旧垫图，为新图腾出空间。")
             except: pass
 
-        self._log(f"   -> 🖼️ 正在装载新垫图...")
-        try:
-            if upload_style == "input" and "upload_input" in self.UI:
-                self.page.locator(self.UI["upload_input"]).first.set_input_files(img_path)
-                
-            elif upload_style == "os_dialog" and "upload_btn" in self.UI:
-                if "local_upload_option" in self.UI:
-                    # 🌟 极简 HIL 替换：不再需要满篇的 wait_for 和 sleep，_click 一句话搞定所有微操
-                    self._click(self.UI["upload_btn"], index="first")
-                    with self.page.expect_file_chooser() as fc:
-                        self._click(self.UI["local_upload_option"], index="first")
-                    fc.value.set_files(img_path)  
-                else:
-                    with self.page.expect_file_chooser() as fc:
-                        self._click(self.UI["upload_btn"], index="first")
-                    fc.value.set_files(img_path)  
-                    
-            self._human_pause("upload")  
-            self.cached_img_path = img_path  
-        except Exception as e:
-            # 贯彻流水线哲学：找不到传图按钮或传图失败时，直接放弃传图，强行往下发词
-            self._log(f"   -> ⚠️ 垫图装载失败或无入口，忽略垫图强制执行放行: {e}")
-            self.cached_img_path = None # 清空残存记忆，防止下一单误判
+    def _smart_upload(self, payload: TaskPayload, upload_style="input"):
+        """多图垫图上传（支持 1-3 张，全局通用）。
+
+        数据源：优先取 payload["image_paths"]（列表），缺省回退单图 image_path。
+        防抖：self.cached_img_paths 记录上一批已上传的路径列表，与当前完全一致则跳过。
+        软性放行：单张上传失败跳过该张；整批全部失败才强制发词（cached 清空）。
+        """
+        # 1. 提取多图路径列表
+        raw_paths = payload.get("image_paths") or []
+        single_path = payload.get("image_path")
+        if single_path and os.path.exists(single_path) and single_path not in raw_paths:
+            raw_paths.insert(0, single_path)
+        # 只保留真实存在的图片
+        img_paths = [p for p in raw_paths if p and os.path.exists(p)]
+        img_paths = img_paths[:3]  # 上限 3 张
+
+        if not img_paths:
+            # 无垫图：清掉残存的预览与记忆
+            self._clear_uploaded_preview()
+            self.cached_img_paths = []
+            self.cached_img_path = None
+            return
+
+        if not hasattr(self, 'UI'): return
+
+        # 2. 防抖：与上一批完全一致则跳过（不删旧图）
+        if img_paths == getattr(self, 'cached_img_paths', []):
+            self._log(f"   -> 🧠 触发垫图记忆，保留当前 {len(img_paths)} 张垫图，跳过物理上传。")
+            return
+
+        # 3. 要传【新一批】图，先物理清理旧图防止堆叠
+        self._clear_uploaded_preview()
+
+        # 4. 逐张上传（软性放行：单张失败跳过该张）
+        self._log(f"   -> 🖼️ 正在装载新垫图 (共 {len(img_paths)} 张)...")
+        uploaded = []
+        for idx, img_path in enumerate(img_paths):
+            try:
+                self._do_upload_one(img_path, upload_style)
+                uploaded.append(img_path)
+                self._log(f"      ✅ 第 {idx+1}/{len(img_paths)} 张垫图已上传: {os.path.basename(img_path)}")
+                self._human_pause("upload")
+            except Exception as e:
+                self._log(f"      ⚠️ 第 {idx+1}/{len(img_paths)} 张垫图上传失败，跳过: {e}")
+
+        # 5. 记账：有至少一张成功就保留记忆；整批全失败则清空，强制发词
+        if uploaded:
+            self.cached_img_paths = uploaded
+            self.cached_img_path = uploaded[0]  # 单图兼容字段
+        else:
+            self.cached_img_paths = []
+            self.cached_img_path = None
 
     # ---------------------------------------------------------
     # [武器库 4.5]: 全局通用真实图片嗅探器
@@ -496,6 +530,7 @@ class BaseAIEngine:
             except: pass
         self.page = None; self.context = None; self.browser = None; self.playwright = None  
         self.cached_img_path = None  
+        self.cached_img_paths = []   
         self.last_params = None      
 
     # =====================================================================

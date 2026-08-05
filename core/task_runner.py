@@ -72,15 +72,21 @@ class TaskRunner:
             
         logging.info("✅ [调度中心] 安检通过！本地 I/O 与网络配置规范无异常。")
 
-    def _standardize_day_prompts(self, raw_prompts, fallback_image="", aspect_ratio="", inject_dna=False):
-        """白天版洗菜机：清洗微型语法 [img.jpg]"""
+    def _standardize_day_prompts(self, raw_prompts, fallback_image="", aspect_ratio="", inject_dna=False, image_names=None):
+        """白天版洗菜机：清洗微型语法 [img.jpg]，支持 1-3 张垫图"""
+        image_names = image_names or ([fallback_image] if fallback_image else [])
         standardized = []
         for i, p in enumerate(raw_prompts):
             p = p.strip()
             if not p: continue
             match = re.search(r'\[(.*?\.(?:jpg|jpeg|png|webp))\]', p, re.IGNORECASE)
-            img_name = match.group(1).strip() if match else fallback_image
-            img_path = os.path.abspath(os.path.join("assets", "references", img_name)) if img_name else ""
+            # 单条提示词内联 [img.jpg] 优先覆盖；否则使用全局多图垫图列表
+            if match:
+                img_names = [match.group(1).strip()]
+            else:
+                img_names = image_names
+            img_paths = [os.path.abspath(os.path.join("assets", "references", n)) for n in img_names if n]
+            img_path = img_paths[0] if img_paths else ""  # 兼容旧字段
             clean_text = re.sub(r'\[(.*?\.(?:jpg|jpeg|png|webp))\]', '', p, flags=re.IGNORECASE).strip()
 
             unique_salt = f"{p}_{time.time()}_{i}"
@@ -89,6 +95,7 @@ class TaskRunner:
                 "task_name": f"DayTask_{hashlib.md5(unique_salt.encode()).hexdigest()[:6]}",
                 "prompt": clean_text,
                 "image_path": img_path,
+                "image_paths": img_paths,
                 "dna_dict": {
                     "Metadata": {"Image_Prompt": clean_text, "Preset_Name": "白天打样", "Preset_Group": "日间手动队列"},
                     "Vault_L_Structure": {"来源引擎": "控制台指令舱"}
@@ -102,13 +109,14 @@ class TaskRunner:
 
     # ================= 🚀 动态队列核心操作 =================
     
-    def start_day_queue(self, prompts, site_name=None, image_name="", aspect_ratio="", inject_dna=True, auto_start=True):
+    def start_day_queue(self, prompts, site_name=None, image_name="", image_names=None, aspect_ratio="", inject_dna=True, auto_start=True):
         """
         全能入队口：支持 Webhook 静默入队 (auto_start=False) 与 UI 点火启动 (auto_start=True)
         默认 inject_dna=True，确保 Webhook 任务默认带标签进 Eagle
+        image_names: 1-3 张垫图文件名列表（None 时回退用单图 image_name）
         """
         # 1. 物理洗菜：转换为标准任务格式
-        new_tasks = self._standardize_day_prompts(prompts, image_name, aspect_ratio, inject_dna) 
+        new_tasks = self._standardize_day_prompts(prompts, image_name, aspect_ratio, inject_dna, image_names) 
         
         with self.lock:
             if new_tasks:
@@ -243,13 +251,14 @@ class TaskRunner:
 
                 prompt = current_task_data.get("prompt", "")
                 raw_image = current_task_data.get("image_path", "")
+                raw_images = current_task_data.get("image_paths") or []
 
                 try:
                     success, result = self.current_engine.process_single(current_task_data)
 
                     if success:
                         logging.info(f"✅ [中枢结算] 任务成功，路径: {result}。触发中心记账。")
-                        ledger.record_task(prompt, raw_image, "成功", site_name)
+                        ledger.record_task(prompt, raw_image, "成功", site_name, image_paths=raw_images)
                         consecutive_failures = 0 
                     else:
                         raise Exception(f"任务执行失败返回: {result}")
@@ -267,7 +276,7 @@ class TaskRunner:
                             self._save_queue_to_disk()
                     else:
                         logging.error(f"❌ [死信丢弃] 任务连续 3 次硬启动失败，已作为坏死任务从内存彻底抹除！")
-                        ledger.record_task(prompt, raw_image, f"失败: {err_msg[:50]}", site_name)
+                        ledger.record_task(prompt, raw_image, f"失败: {err_msg[:50]}", site_name, image_paths=raw_images)
                     
                     
                     if "收到停止指令" in err_msg or self.stop_requested:
