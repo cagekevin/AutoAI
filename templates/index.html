@@ -127,6 +127,7 @@
             <div class="controls flex-between" id="day-controls">
                 <div class="flex-row-sm">
                     <button class="btn btn-primary" style="padding: 8px 16px; font-size: 14px;" onclick="openDayDlg()">➕ 新建任务</button>
+                    <button class="btn" style="padding: 8px 16px; font-size: 14px; border-color:var(--primary); color:var(--primary);" onclick="openJsonDlg()">📦 导入JSON</button>
                     <div class="batch-controls">
                         <input type="checkbox" id="chk-all" class="q-chk" onchange="toggleSelectAll(this.checked)" title="全选/全不选">
                         <button class="btn" id="btn-batch-edit" onclick="openBatchDlg()" style="display:none; border-color:var(--primary); color:var(--primary);">✏️ 批量装配</button>
@@ -202,6 +203,19 @@
         </div>
     </dialog>
 
+    <dialog id="dlg-json">
+        <div class="dlg-title">📦 批量导入 JSON 任务</div>
+        <textarea id="json-input" rows="12" class="cfg-textarea" spellcheck="false" placeholder='[
+  {"prompt": "赛博朋克猫咪，霓虹灯", "images": ["cat1.jpg","cat2.jpg"], "aspect_ratio": "9:16", "model": "Nano Banana 2"},
+  {"prompt": "蒸汽朋克机器人", "images": ["robot_a.jpg"], "aspect_ratio": "1:1"}
+]'></textarea>
+        <p style="color:#94a3b8; margin-top:6px; font-size:12px;">每任务可配 images(1-3张垫图，放 assets/references/)、aspect_ratio、model。只静默入队，需手动点火。</p>
+        <div class="dlg-footer" style="justify-content:flex-end;">
+            <button class="btn" onclick="this.closest('dialog').close()">关闭</button>
+            <button class="btn btn-success" onclick="importJson()">📥 导入并入队</button>
+        </div>
+    </dialog>
+
     <dialog id="dlg-cfg">
         <div class="dlg-title">⚙️ 系统全局配置</div>
         <textarea id="cfg-text" rows="18" class="cfg-textarea" spellcheck="false">{{ config_str }}</textarea>
@@ -260,6 +274,19 @@
                 if(!silent && res.status !== 'success') alert(res.msg);
                 poll(); return res;
             } catch(e) { if(!silent) alert("请求失败"); }
+        }
+
+        // --- 📦 JSON 批量导入 ---
+        function openJsonDlg() { getE('json-input').value = ""; getE('dlg-json').showModal(); }
+        async function importJson() {
+            const raw = getE('json-input').value.trim();
+            if(!raw) return alert("请粘贴 JSON 内容！");
+            let arr;
+            try { arr = JSON.parse(raw); }
+            catch(e) { return alert("JSON 解析失败，请检查格式：" + e.message); }
+            if(!Array.isArray(arr)) return alert("必须是 JSON 数组，如 [{...},{...}]");
+            const res = await fetchAPI('/api/batch_generate', { payload: JSON.stringify(arr) }, false);
+            if(res && res.status === 'success') getE('dlg-json').close();
         }
 
         // --- 新增：批量打钩与 UI 更新逻辑 ---

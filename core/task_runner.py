@@ -107,6 +107,90 @@ class TaskRunner:
             })
         return standardized
 
+    # ================= 🚀 结构化批量任务导入（每任务独立垫图+参数） =================
+
+    def _standardize_structured_tasks(self, raw_tasks, inject_dna=True):
+        """结构化任务洗菜机：每个任务可独立配置 1-3 张垫图 + 比例/模型。
+
+        输入 raw_tasks: list[dict]，每项支持字段：
+            prompt        (必填) 提示词
+            images        (可选) 垫图文件名列表，1-3 张，对应 assets/references/ 下
+            aspect_ratio  (可选) 比例，如 "9:16"
+            model         (可选) 模型，如 "Nano Banana 2"
+        返回标准任务列表，与 _standardize_day_prompts 结构一致。
+        """
+        standardized = []
+        for i, item in enumerate(raw_tasks):
+            if not isinstance(item, dict):
+                continue
+            p = str(item.get("prompt", "")).strip()
+            if not p:
+                continue
+
+            # 1. 垫图：优先取结构化 images 字段，其次提示词内联 [img.jpg]
+            img_names = [n for n in (item.get("images") or []) if n]
+            inline = re.search(r'\[(.*?\.(?:jpg|jpeg|png|webp))\]', p, re.IGNORECASE)
+            if inline and not img_names:
+                img_names = [inline.group(1).strip()]
+            img_paths = [os.path.abspath(os.path.join("assets", "references", n)) for n in img_names if n][:3]
+            img_path = img_paths[0] if img_paths else ""
+            clean_text = re.sub(r'\[(.*?\.(?:jpg|jpeg|png|webp))\]', '', p, flags=re.IGNORECASE).strip()
+
+            # 2. engine_params：每任务独立比例/模型，缺失用默认值兜底
+            engine_params = {}
+            aspect = str(item.get("aspect_ratio") or "").strip()
+            if aspect:
+                engine_params["aspect_ratio"] = aspect
+            model = str(item.get("model") or "").strip()
+            if model:
+                engine_params["model"] = model
+
+            unique_salt = f"{p}_{time.time()}_{i}"
+            standardized.append({
+                "task_name": f"DayTask_{hashlib.md5(unique_salt.encode()).hexdigest()[:6]}",
+                "prompt": clean_text,
+                "image_path": img_path,
+                "image_paths": img_paths,
+                "dna_dict": {
+                    "Metadata": {"Image_Prompt": clean_text, "Preset_Name": "白天打样", "Preset_Group": "日间手动队列"},
+                    "Vault_L_Structure": {"来源引擎": "结构化批量导入"}
+                } if inject_dna else {},
+                "engine_params": engine_params,
+            })
+        return standardized
+
+    def enqueue_structured(self, raw_tasks, site_name=None, auto_start=True, inject_dna=True):
+        """结构化批量任务入队口：每任务独立垫图+参数。
+        供 /api/batch_generate (JSON 数组) 与前端 JSON 导入共用。
+        """
+        new_tasks = self._standardize_structured_tasks(raw_tasks, inject_dna)
+
+        with self.lock:
+            if new_tasks:
+                self.day_queue.extend(new_tasks)
+                self.total_count += len(new_tasks)
+                self._save_queue_to_disk()
+
+            if not self.day_queue:
+                return False, "⚠️ 大厅空空如也，请先添加任务！"
+
+            if not auto_start:
+                return True, f"✅ 结构化任务已静默装填 (共 {len(new_tasks)} 个)，等待手动点火。"
+
+            if self.is_running:
+                if new_tasks:
+                    return True, f"✅ 成功追加 {len(new_tasks)} 个任务到排队序列！"
+                return False, "⚠️ 引擎已经在运行中，请勿重复点击启动！"
+
+            if not site_name:
+                return False, "❌ 启动失败：未指定执行引擎（site_name）。"
+
+            self.is_running = True
+            self.current_mode = "day"
+
+        self.executor.submit(self._run_wrapper, site_name, "day")
+        return True, "🚀 引擎已点火！开始消费大厅流水线任务。"
+
     # ================= 🚀 动态队列核心操作 =================
     
     def start_day_queue(self, prompts, site_name=None, image_name="", image_names=None, aspect_ratio="", inject_dna=True, auto_start=True):

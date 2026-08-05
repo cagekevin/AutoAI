@@ -195,21 +195,30 @@ async def toggle_pause():
 @app.post("/api/batch_generate")
 async def batch_generate(req: WebhookPayload):
     try:
-        # 1. 解析 Chrome 插件丢过来的 JSON 字符串
+        # 1. 解析传入的 JSON 字符串（Chrome 插件 / 外部工具 / 前端导入）
         prompts_list = json.loads(req.payload)
-        
-        # 2. 提取所有的英文 prompt (加了一层 isinstance 安全防护，防脏数据)
-        only_prompts = [item.get("prompt") for item in prompts_list if isinstance(item, dict) and item.get("prompt")]
-        
-        if not only_prompts:
+        if not isinstance(prompts_list, list):
+            return {"status": "error", "msg": "payload 必须是 JSON 数组！"}
+
+        # 2. 兼容两种格式：
+        #    格式 A（结构化）：[{"prompt": "...", "images": ["a.jpg"], "aspect_ratio": "9:16", "model": "..."}]
+        #    格式 B（纯 prompt）：[{"prompt": "..."}, "纯字符串"] 等
+        structured = []
+        for item in prompts_list:
+            if isinstance(item, dict) and item.get("prompt"):
+                structured.append(item)
+            elif isinstance(item, str) and item.strip():
+                structured.append({"prompt": item.strip()})
+
+        if not structured:
             return {"status": "error", "msg": "未在 payload 中提取到任何合法的 prompt 字段！"}
-            
-        # 3. 完美复用现有的排队系统，开始让 Python 排队干活！
-        success, msg = runner.start_day_queue(
-            prompts=only_prompts,
-            auto_start=False     # 🛡️ 安全插销：仅入队，坚决不点火！
+
+        # 3. 结构化入队（每任务独立垫图/参数），静默不点火，交给控制台核验后启动
+        success, msg = runner.enqueue_structured(
+            raw_tasks=structured,
+            auto_start=False
         )
-        
+
         return {"status": "success", "msg": f"已静默送入大厅！请在控制台核验后手动启动。({msg})"}
     except json.JSONDecodeError:
         return {"status": "error", "msg": "Python解析 JSON 失败，请检查大模型吐出的是否是纯正 JSON 数组"}
