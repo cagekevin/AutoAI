@@ -15,6 +15,8 @@
   open                    连接 9222 浏览器
   page                    看当前页面 URL / 标题
   nav <url|站点名>        导航到 URL 或站点(doubao/lovart/jimeng/flow)
+  tabs                    列出所有标签页
+  tab <序号>              切换到指定标签页
   ── 读取 / 抓取 ─────────────────────────────
   buttons                 列出页面所有可见按钮（摸结构）
   find <文本>             搜含文本的元素 + 锚点链（找 data-testid）
@@ -22,30 +24,42 @@
   verify <sel>[; sel...]  批量验证多个选择器命中情况（total/visible）
   html                    抓整页净化 DOM
   shot [路径]             截图当前页面
+  frames                  列出页面所有 iframe
+  frame <序号> <命令...>  在指定 iframe 内执行 find/state/verify/probe 等
+  shadow <选择器>         穿透 Shadow DOM 找元素并列出锚点链
+  js <JS代码>             在页面执行任意 JS 并返回结果
   ── 交互操作 ─────────────────────────────
   click <文本>            点击含该文本的按钮（精确匹配）
   select <文本>           同 click
   open-menu <选择器> [click|hover]  展开下拉菜单（默认 hover）
+  probe <选择器> [first|last] [click|hover]  模拟引擎式点击并报告点后变化
+  wait <选择器> [超时秒]   等元素出现（条件渲染，默认 10s）
   type <文本>|<选择器> <文本>  向输入框打字（拟人延迟）
   upload <选择器> <路径>  上传文件（file_chooser 拦截/set_input_files）
   clear [选择器]          清空输入框（Ctrl+A + Backspace）
   esc [键名]              按键，默认 Esc 关弹窗
   coord <x> <y>           盲点屏幕坐标（收起菜单/弹窗）
   waitimg <选择器> <张数> [超时秒]  等出图（SRC 差集轮询，默认 300s）
-  ── 一键流程 ─────────────────────────────
+  getimg <选择器> [保存目录]  下载命中的真图 URL 到本地
+  ── 沉淀 / 流程 ─────────────────────────────
+  export-ui [文件名]      把验证过的选择器聚合成引擎 UI 字典 JSON 落盘
   flow <站点> <提示词> [--img 垫图] [--num 张数]  执行站点预设完整流程
   ── 控制 ─────────────────────────────
   help                    显示本帮助
   quit / exit             退出
 
-安全：读类命令（buttons/find/state/verify/html/shot）只读；
-     基础交互（click/open-menu）默认只做轻量点击/展开便于排查试探。
+安全：读类命令（buttons/find/state/verify/html/shot/frames/shadow/js）只读；
+     基础交互（click/open-menu/probe）默认只做轻量点击/展开便于排查试探。
      发消息/传图用 type / upload / flow，它们支持完整交互（可真正发送）。
 """
 import os
 import re
 import sys
+import json
 import time
+import shutil
+import urllib.request
+import urllib.parse
 import argparse
 from functools import wraps
 from playwright.sync_api import sync_playwright
@@ -60,6 +74,9 @@ except Exception:
 
 CDP_URL = "http://127.0.0.1:9222"
 
+# 锚点记忆存储路径（跨会话持久化，探到的稳定锚点下次自动复用）
+_ANCHOR_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".webctl_anchors.json")
+
 # 只保留非样式特征 class（找锚点时过滤 Tailwind/框架样式噪音）
 _SKIP_CLS = re.compile(
     r"^(w-|h-|m[trblxy]?-|p[trblxy]?-|bg-|text-|border|rounded|shadow|opacity-|z-|gap-|flex|grid|"
@@ -71,6 +88,33 @@ _SKIP_CLS = re.compile(
 def _clean_cls(cls: str) -> str:
     """清理并过滤无用的样式 class"""
     return " ".join(c for c in (cls or "").split() if c and not _SKIP_CLS.match(c))[:80]
+
+# Radix/复合框架生成带冒号的 id（如 #radix-:r3f:），Playwright CSS 里冒号需转义
+_ID_COLON_RE = re.compile(r'(#[^ \t\r\n,>+~]+)')
+
+def _norm_selector(sel: str) -> str:
+    """标准化选择器，解决探路常见坑：
+    1. `:has-text(中文)` 无引号 → 自动补成 `:has-text("中文")`（Playwright 要求字符串参数）
+    2. id 里的冒号（#radix-:r3f:）→ 转义为 \\: （否则被当伪类解析失败）
+    """
+    if not sel:
+        return sel
+
+    def fix_has_text(m):
+        # :has-text(xxx) 或 :has-text( xxx ) → :has-text("xxx")；已带引号则跳过
+        inner = m.group(1)
+        if inner.strip().startswith(('"', "'")):
+            return f':has-text({inner.strip()})'
+        return f':has-text("{inner.strip()}")'
+    sel = re.sub(r':has-text\(\s*([^()]*?)\s*\)', fix_has_text, sel)
+
+    def fix_id_colon(m):
+        # 对 # 开头的片段，把裸冒号转义为 \\: （但不破坏已有的 \\:）
+        part = m.group(1)
+        part = re.sub(r'(?<!\\):', r'\\:', part)
+        return part
+    sel = _ID_COLON_RE.sub(fix_id_colon, sel)
+    return sel
 
 
 # ---------- 装饰器 ----------
@@ -102,6 +146,8 @@ class WebCtl:
         self.pw = None
         self.browser = None
         self.page = None
+        # 锚点记忆表：ui/anchor 收集的稳定锚点，按名称复用（跨会话持久化，迭代复用）
+        self.anchors = self._load_anchors()
         
         # 注册各站点的预设流程
         self._FLOWS = {
@@ -122,6 +168,13 @@ class WebCtl:
             "clear": self.cmd_clear, "coord": self.cmd_coord, "shot": self.cmd_shot, 
             "waitimg": self.cmd_waitimg, "help": self.cmd_help, "quit": self.cmd_quit, 
             "exit": self.cmd_quit,
+            # ---- 探路增强 ----
+            "probe": self.cmd_probe, "wait": self.cmd_wait,
+            "frames": self.cmd_frames, "frame": self.cmd_frame,
+            "shadow": self.cmd_shadow, "js": self.cmd_js,
+            "tabs": self.cmd_tabs, "tab": self.cmd_tab,
+            "export-ui": self.cmd_export_ui, "getimg": self.cmd_getimg,
+            "ui": self.cmd_ui, "anchor": self.cmd_anchor,
         }
 
     # ---------- 基础 ----------
@@ -145,6 +198,42 @@ class WebCtl:
                 self.page = p
                 return
         self.page = self.browser.contexts[0].pages[0] if self.browser.contexts[0].pages else None
+
+    @catch_error("❌ 标签页操作失败")
+    def cmd_tabs(self, args):
+        """列出当前 context 所有标签页，供 tab 切换认路。"""
+        pages = self.browser.contexts[0].pages
+        cur = getattr(self, 'page', None)
+        print(f"共 {len(pages)} 个标签页:")
+        for i, p in enumerate(pages):
+            mark = " 👈 当前" if p == cur else ""
+            try:
+                title = p.title()
+            except Exception:
+                title = "?"
+            print(f"  [{i}] {title!r}\n      {p.url}{mark}")
+
+    @catch_error("❌ 切换失败")
+    def cmd_tab(self, args):
+        """切换到指定序号的标签页：tab <序号>"""
+        if not args:
+            print("用法: tab <序号>（先用 tabs 看序号）")
+            return
+        try:
+            idx = int(args[0])
+        except ValueError:
+            print(f"❌ 序号需为数字: {args[0]}")
+            return
+        pages = self.browser.contexts[0].pages
+        if idx >= len(pages):
+            print(f"❌ 序号 {idx} 越界，共 {len(pages)} 个")
+            return
+        self.page = pages[idx]
+        try:
+            self.page.bring_to_front()
+        except Exception:
+            pass
+        print(f"✅ 已切到标签页 [{idx}]: {self.page.url}")
 
     # ---------- 看 ----------
     @require_page
@@ -230,7 +319,8 @@ class WebCtl:
             print("用法: state <选择器>")
             return
             
-        sel = " ".join(args)
+        raw = " ".join(args)
+        sel = _norm_selector(self._resolve_anchor(raw)) if (" " not in raw) else _norm_selector(raw)
         loc = self.page.locator(sel)
         
         if (n := loc.count()) == 0:
@@ -376,6 +466,175 @@ class WebCtl:
             time.sleep(2)
         print(f"⚠️ 超时，仅出现 {len(seen)} 张（不足 {target} 张）")
 
+    @require_page
+    @catch_error("❌ 下载失败")
+    def cmd_getimg(self, args):
+        """getimg <选择器> [保存目录]：把命中的真实图片 URL 下载到本地（收割）。"""
+        if not args:
+            print("用法: getimg <选择器> [保存目录]")
+            return
+        sel = _norm_selector(args[0])
+        out_dir = args[1] if len(args) > 1 else os.path.join("Downloads", "webctl_images")
+        os.makedirs(out_dir, exist_ok=True)
+
+        srcs = self.page.locator(sel).evaluate_all(
+            "els => els.map(e => e.src || e.getAttribute('data-src') || '')"
+        )
+        # 过滤：只留 http 真图，去掉 data: 内联与黑名单占位
+        blacklist = re.compile(r"(base64|blob:|loading|placeholder|spinner|/user/|/upload/|/reference/|/source/|/input/)", re.I)
+        valid = [s for s in dict.fromkeys(srcs) if s and s.startswith("http") and not blacklist.search(s)]
+        if not valid:
+            print(f"❌ 「{sel}」未找到 http 真图 URL（命中 {len(srcs)} 个原始 src）")
+            return
+        print(f"⬇️ 发现 {len(valid)} 张真图，开始下载到 {out_dir} ...")
+        user_agent = self.page.evaluate("navigator.userAgent")
+        cookies = self.context_cookies()
+        for i, url in enumerate(valid):
+            fname = f"{int(time.time())}_{i}.jpg"
+            save_path = os.path.join(out_dir, fname)
+            try:
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": user_agent,
+                    "Cookie": cookies,
+                    "Referer": self.page.url,
+                })
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = resp.read()
+                with open(save_path, "wb") as f:
+                    f.write(data)
+                print(f"  ✅ [{i+1}/{len(valid)}] {fname}  {url[:90]}")
+            except Exception as e:
+                print(f"  ⚠️ [{i+1}/{len(valid)}] 下载失败: {str(e)[:60]}  {url[:90]}")
+        print(f"📦 完成，保存目录: {out_dir}")
+
+    def context_cookies(self):
+        """取当前 context 的 Cookie 串（供下载带登录态）。"""
+        try:
+            cookies = self.browser.contexts[0].cookies()
+            return "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+        except Exception:
+            return ""
+
+    @require_page
+    @catch_error("❌ 导出失败")
+    @require_page
+    @catch_error("❌ 收集 UI 失败")
+    def cmd_ui(self, args):
+        """ui：扫描当前页，收集可见可交互元素的稳定锚点，存进记忆表 self.anchors。
+        切对模式后参数按钮（比例/模型/风格/上传/发送）是稳定不变的，一次收集、后续按名复用。
+        之后命令里用锚点名（如 click 比例 / open-menu 模型）即可自动定位。
+        """
+        nodes = self.page.evaluate(
+            """() => {
+                const out = {};
+                const els = document.querySelectorAll('button,a,[role="button"],[role="menuitem"],[role="tab"],select');
+                els.forEach(el => {
+                    // 只看可见元素
+                    const r = el.getBoundingClientRect();
+                    const vis = r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+                    if (!vis) return;
+                    const text = (el.innerText || el.getAttribute('aria-label') || '').trim();
+                    if (!text) return;
+                    // 只取短文本（按钮/选项），跳过冗长描述
+                    const key = text.split('\\n')[0].trim().slice(0, 12);
+                    if (!key) return;
+                    // 保留最短文本，避免父元素覆盖子元素
+                    if (!(key in out) || text.length < out[key].text.length) {
+                        const c = typeof el.className === 'string' ? el.className : '';
+                        out[key] = { text, tag: el.tagName.toLowerCase(), cls: c.slice(0, 60) };
+                    }
+                });
+                return out;
+            }"""
+        )
+        if not nodes:
+            print("⚠️ 当前页未找到可见的可交互文本元素。可能未切到正确模式/未登录。")
+            return
+        print(f"✅ 收集到 {len(nodes)} 个稳定锚点，已存入记忆表（后续 click/open-menu/state 可直接用锚点名）：")
+        for key, info in nodes.items():
+            # 生成可复用的选择器：优先 has-text 文本锚定（比动态 class 稳）
+            sel = f'button:has-text("{key}"), a:has-text("{key}")'
+            self.anchors[key] = sel
+            print(f"  「{key}」 <- {sel}")
+        self._save_anchors()
+        print(f"  💾 已持久化到 {_ANCHOR_FILE}（下次启动自动复用，不用重新探）")
+        print("  用法示例: click 比例 | open-menu 模型 | state 风格")
+        print("  手动补充/覆盖用: anchor <名称> <选择器>")
+
+    def _load_anchors(self) -> dict:
+        """加载持久化的锚点表，实现跨会话迭代复用。"""
+        try:
+            if os.path.exists(_ANCHOR_FILE):
+                with open(_ANCHOR_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+        return {}
+
+    def _save_anchors(self):
+        """把锚点表写入磁盘，供下次会话复用（迭代式探路的关键）。"""
+        try:
+            with open(_ANCHOR_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.anchors, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"  ⚠️ 锚点持久化失败: {str(e)[:60]}")
+
+    @catch_error("❌ 添加锚点失败")
+    def cmd_anchor(self, args):
+        """anchor <名称> <选择器>：手动把稳定锚点加入记忆表并持久化。"""
+        if len(args) < 2:
+            print("用法: anchor <名称> <选择器>")
+            return
+        name, sel = args[0], _norm_selector(" ".join(args[1:]))
+        self.anchors[name] = sel
+        self._save_anchors()
+        print(f"✅ 已记住锚点: 「{name}」-> {sel}（已持久化）")
+
+    def _resolve_anchor(self, target: str) -> str:
+        """若 target 命中了记忆的锚点名，返回其选择器；否则原样返回（视为选择器或文本）。"""
+        if target in self.anchors:
+            return self.anchors[target]
+        return target
+
+    def cmd_export_ui(self, args):
+        """export-ui [文件名]：把当前页探路验证过的选择器聚合成引擎 UI 字典 JSON 落盘。
+        收集：当前页面所有含 data-testid 的元素 + 用户已通过 state/verify 确认的选择器。
+        简单起见，收集所有带 data-testid 的元素并给建议 key（按文案）。
+        """
+        fname = args[0] if args else os.path.join("Downloads", "webctl_ui_export.json")
+        os.makedirs(os.path.dirname(fname) or ".", exist_ok=True)
+
+        # 收集所有 data-testid 元素
+        nodes = self.page.evaluate(
+            """() => {
+                const out = {};
+                document.querySelectorAll('[data-testid]').forEach(el => {
+                    const tid = el.getAttribute('data-testid');
+                    if (!tid || tid in out) return;
+                    const text = (el.innerText || el.getAttribute('aria-label') || '').trim().slice(0, 30);
+                    const tag = el.tagName.toLowerCase();
+                    out[tid] = { tag, text };
+                });
+                return out;
+            }"""
+        )
+        if not nodes:
+            print("⚠️ 当前页未找到任何 data-testid 元素。可先 find/state 探到选择器后，再 export-ui 收集。")
+            return
+
+        # 组织成引擎 UI 字典风格：建议 key = 文本短名（英文/拼音不易，这里用 text 截断）
+        ui = {}
+        for tid, info in nodes.items():
+            key = f"testid_{tid.split('_')[-1]}" if tid else f"el_{len(ui)}"
+            ui[key] = f'[data-testid="{tid}"]'
+        payload = {"_note": "由 webctl export-ui 生成，key 为建议值，请按引擎实际 UI 字典 key 重命名", "ui": ui}
+        with open(fname, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        print(f"✅ 已导出 {len(ui)} 个 data-testid 选择器到 {fname}")
+        print("   请按 base_engine.py 的 UI key（mode_btn/param_panel_trigger/upload_input/input_box/new_proj_btn/popups...）重命名后使用")
+
     # ---------------------------------------------------------
     # [预设流程]：把站点常用操作序列内化，一条命令走完整流程
     # ---------------------------------------------------------
@@ -507,7 +766,7 @@ class WebCtl:
             print("用法: verify <选择器> 或 verify <选择器1> ; <选择器2> ...")
             return
             
-        sels = [s.strip() for s in " ".join(args).split(";") if s.strip()]
+        sels = [_norm_selector(s.strip()) for s in " ".join(args).split(";") if s.strip()]
         print(f"验证 {len(sels)} 个选择器：")
         
         for sel in sels:
@@ -543,6 +802,201 @@ class WebCtl:
         html = re.sub(r">\s+<", "><", html)
         print(html[:8000])
 
+    @require_page
+    @catch_error("❌ 穿透失败")
+    def cmd_shadow(self, args):
+        """shadow <选择器>：穿透 Shadow DOM / iframe 递归找含该文本的元素，列出锚点链。"""
+        if not args:
+            print("用法: shadow <文本>（递归穿透所有 shadowRoot / contentDocument 找含文本元素）")
+            return
+        kw = " ".join(args)
+        res = self.page.evaluate(
+            """(kw) => {
+                const results = [];
+                const walk = (root) => {
+                    root.querySelectorAll('button,a,span,div,li,[role="menuitem"],[role="tab"],[data-testid]').forEach(el => {
+                        const t = (el.innerText || "").trim();
+                        if (t && t.length <= 40 && t.includes(kw)) {
+                            const chain = [];
+                            let cur = el;
+                            for (let i = 0; i <= 3 && cur; i++) {
+                                chain.push({
+                                    tag: cur.tagName.toLowerCase(),
+                                    testid: cur.getAttribute("data-testid") || "",
+                                    cls: (typeof cur.className === "string" ? cur.className : ""),
+                                    text: (cur.innerText || "").trim().slice(0, 30),
+                                    id: cur.id || ""
+                                });
+                                cur = cur.parentElement;
+                            }
+                            results.push(chain);
+                        }
+                    });
+                    root.querySelectorAll('*').forEach(el => {
+                        if (el.shadowRoot) walk(el.shadowRoot);
+                        if (el.tagName === 'IFRAME') { try { walk(el.contentDocument); } catch(e){} }
+                    });
+                };
+                walk(document);
+                return results.slice(0, 10);
+            }""",
+            kw,
+        )
+        if not res:
+            print(f"未在 Shadow DOM/iframe 中找到含「{kw}」的元素。")
+            return
+        for i, chain in enumerate(res):
+            print(f"\n--- 命中 {i+1} ---")
+            for n in chain:
+                print(f"  <{n['tag']}> testid={n['testid']!r} id={n['id']!r} cls={_clean_cls(n['cls'])!r} text={n['text']!r}")
+
+    @require_page
+    @catch_error("❌ JS 执行失败")
+    def cmd_js(self, args):
+        """js <JS代码>：在页面执行任意 JS，返回 JSON 序列化结果（探结构/穿透用）。"""
+        if not args:
+            print("用法: js <JS代码>（如 js \"Array.from(document.querySelectorAll('*')).length\"）")
+            return
+        code = " ".join(args)
+        ret = self.page.evaluate(code)
+        if isinstance(ret, (dict, list)):
+            print(json.dumps(ret, ensure_ascii=False, indent=2)[:8000])
+        else:
+            print(ret)
+
+    @require_page
+    @catch_error("❌ 取 frame 失败")
+    def cmd_frames(self, args):
+        """frames：列出页面所有 iframe（含名字/url/序号），供 frame <序号> 用。"""
+        fs = self.page.frames
+        print(f"共 {len(fs)} 个 frame:")
+        for i, f in enumerate(fs):
+            mark = " (主frame)" if f == self.page.main_frame else ""
+            try:
+                u = f.url
+            except Exception:
+                u = "?"
+            print(f"  [{i}] {u}{mark}")
+
+    @require_page
+    @catch_error("❌ frame 内操作失败")
+    def cmd_frame(self, args):
+        """frame <序号> <子命令...>：在指定 iframe 内执行 find/state/verify/probe/click。"""
+        if len(args) < 2:
+            print("用法: frame <序号> <find/state/verify/probe/click/buttons/...> <参数>")
+            return
+        try:
+            idx = int(args[0])
+        except ValueError:
+            print(f"❌ frame 序号需为数字: {args[0]}")
+            return
+        fs = self.page.frames
+        if idx >= len(fs):
+            print(f"❌ frame 序号 {idx} 越界，共 {len(fs)} 个")
+            return
+        f = fs[idx]
+        sub_cmd, sub_args = args[1].lower(), args[2:]
+        print(f"▶️ 在 frame [{idx}] {f.url[:80]} 内执行 {sub_cmd}")
+
+        if sub_cmd == "find":
+            if not sub_args:
+                print("用法: frame <n> find <文本>")
+                return
+            kw = " ".join(sub_args)
+            res = f.evaluate(
+                """(kw) => {
+                    const results = [];
+                    document.querySelectorAll('button,a,span,div,li,[role="menuitem"],[role="tab"],[data-testid]').forEach(el => {
+                        const t = (el.innerText || "").trim();
+                        if (t && t.length <= 25 && t.includes(kw)) {
+                            const chain = [];
+                            let cur = el;
+                            for (let i = 0; i <= 3 && cur; i++) {
+                                chain.push({tag: cur.tagName.toLowerCase(), testid: cur.getAttribute("data-testid")||"", cls:(typeof cur.className==="string"?cur.className:""), text:(cur.innerText||"").trim().slice(0,30), id:cur.id||""});
+                                cur = cur.parentElement;
+                            }
+                            results.push(chain);
+                        }
+                    });
+                    return results.slice(0, 8);
+                }""",
+                kw,
+            )
+            if not res:
+                print(f"frame 内未找到含「{kw}」的元素。")
+                return
+            for i, chain in enumerate(res):
+                print(f"\n--- 命中 {i+1} ---")
+                for n in chain:
+                    print(f"  <{n['tag']}> testid={n['testid']!r} id={n['id']!r} cls={_clean_cls(n['cls'])!r} text={n['text']!r}")
+        elif sub_cmd == "state":
+            if not sub_args:
+                print("用法: frame <n> state <选择器>")
+                return
+            sel = _norm_selector(" ".join(sub_args))
+            loc = f.locator(sel)
+            n = loc.count()
+            if n == 0:
+                print(f"frame 内「{sel}」命中 0")
+                return
+            for i in range(min(n, 3)):
+                info = loc.nth(i).evaluate(
+                    "e => ({tag:e.tagName, text:(e.innerText||'').trim().slice(0,40), "
+                    "testid:e.getAttribute('data-testid')||'', vis:!!(e.offsetWidth||e.offsetHeight)})"
+                )
+                print(f"  [{i}] {info}")
+        elif sub_cmd == "verify":
+            sels = [_norm_selector(s.strip()) for s in " ".join(sub_args).split(";") if s.strip()]
+            for sel in sels:
+                try:
+                    loc = f.locator(sel)
+                    total = loc.count()
+                    vis = sum(1 for i in range(total) if loc.nth(i).is_visible())
+                    mark = "✅" if vis > 0 else ("⚠️" if total > 0 else "❌")
+                    print(f"  {mark} total={total:3d} visible={vis:3d}  {sel}")
+                except Exception as e:
+                    print(f"  ❌ {sel} 异常: {str(e)[:60]}")
+        elif sub_cmd == "probe":
+            sel = _norm_selector(" ".join(sub_args)) if sub_args else ""
+            if not sel:
+                print("用法: frame <n> probe <选择器>")
+                return
+            loc = f.locator(sel).last
+            total = f.locator(sel).count()
+            vis = sum(1 for i in range(f.locator(sel).count()) if f.locator(sel).nth(i).is_visible())
+            print(f"  命中 total={total} visible={vis}，模拟引擎式点击 .last ...")
+            loc.wait_for(state="visible", timeout=8000)
+            loc.click(force=True)
+            time.sleep(1)
+            print(f"  ✅ frame 内引擎式点击成功（已点击「{sel}」的 .last）")
+        elif sub_cmd == "click":
+            if not sub_args:
+                print("用法: frame <n> click <文本>")
+                return
+            kw = " ".join(sub_args)
+            clicked = f.evaluate(
+                """(kw) => {
+                    const els = Array.from(document.querySelectorAll('button,a,[role="button"],[role="menuitem"]'));
+                    const t = els.find(e => (e.innerText||'').trim() === kw);
+                    if (t) { t.click(); return {ok:true, tag:t.tagName}; }
+                    const m = els.filter(e => (e.innerText||'').trim().includes(kw));
+                    if (m.length) { m[0].click(); return {ok:true, tag:m[0].tagName, matched:m.length}; }
+                    return {ok:false};
+                }""",
+                kw,
+            )
+            print(f"  {'✅ 点击了' if clicked.get('ok') else '❌ 未找到'} <{clicked.get('tag')}> 含「{kw}」")
+        elif sub_cmd == "buttons":
+            seen = []
+            for b in f.locator("button:visible").all():
+                if (t := (b.inner_text() or "").strip()) and t not in seen:
+                    seen.append(t)
+            print(f"  frame 内可见按钮去重 {len(seen)} 个:")
+            for t in seen:
+                print(f"    · {t!r}")
+        else:
+            print(f"❌ frame 内不支持子命令: {sub_cmd}（支持 find/state/verify/probe/click/buttons）")
+
     # ---------- 做 ----------
     @require_page
     @catch_error("⚠️ 展开失败")
@@ -554,11 +1008,15 @@ class WebCtl:
         # 解析动作：仅当最后一个是显式的 click/hover 关键字时才作为动作，其余全是选择器
         if len(args) > 1 and args[-1] in ("click", "hover"):
             action = args[-1]
-            sel = " ".join(args[:-1])
+            target = " ".join(args[:-1])
         else:
             action = "hover"
-            sel = " ".join(args)
-        
+            target = " ".join(args)
+        # 锚点名复用：无空格的单词若命中锚点表，直接换成已记住的选择器
+        sel = _norm_selector(self._resolve_anchor(target)) if (" " not in target) else _norm_selector(target)
+        if not sel:
+            print("❌ 请提供选择器")
+            return
         loc = self.page.locator(sel).last
         loc.scroll_into_view_if_needed(timeout=5000)
         
@@ -571,12 +1029,122 @@ class WebCtl:
         print(f"✅ 已用 {action} 展开「{sel}」")
 
     @require_page
-    def cmd_click(self, args):
+    @catch_error("❌ probe 失败")
+    def cmd_probe(self, args):
+        """probe <选择器> [first|last] [click|hover]：模拟引擎式点击。
+        与引擎 HIL 对齐：wait visible + click force + first/last，点完报告点后 DOM 变化。
+        """
         if not args:
-            print("用法: click <文本>")
+            print("用法: probe <选择器> [first|last] [click|hover]")
             return
-            
-        kw = " ".join(args)
+        # 解析可选参数
+        which = "last"
+        action = "click"
+        sels = []
+        for a in args:
+            if a in ("first", "last"):
+                which = a
+            elif a in ("click", "hover"):
+                action = a
+            else:
+                sels.append(a)
+        raw = " ".join(sels)
+        sel = _norm_selector(self._resolve_anchor(raw)) if (" " not in raw) else _norm_selector(raw)
+        if not sel:
+            print("❌ 请提供选择器")
+            return
+
+        loc_all = self.page.locator(sel)
+        total = loc_all.count()
+        vis = sum(1 for i in range(total) if loc_all.nth(i).is_visible())
+        print(f"🧪 probe「{sel}」: total={total} visible={vis}，用 .{which} + {action} 模拟引擎式操作...")
+
+        target = loc_all.first if which == "first" else loc_all.last
+        target.wait_for(state="visible", timeout=8000)
+
+        # 点前快照：记录页面可见文本数（判断点后是否有面板展开/内容变化）
+        def snapshot():
+            try:
+                return self.page.evaluate("document.body ? document.body.innerText.length : 0")
+            except Exception:
+                return None
+        before = snapshot()
+
+        try:
+            if action == "hover":
+                target.hover(force=True)
+            else:
+                target.click(force=True)
+        except Exception as e:
+            print(f"  ⚠️ 引擎式{action}抛出异常（点击可能已生效但元素随后被移除/页面导航）: {str(e)[:60]}")
+            return
+        time.sleep(1.2)
+
+        after = snapshot()
+        if before is None or after is None:
+            print(f"  ✅ 引擎式{action}成功（{which}），但页面发生了导航/上下文销毁，无法读取点后 DOM。")
+            print(f"  ↳ 若当前 URL 已变化，说明点击触发了跳转；用 page 命令确认。")
+            return
+        delta = after - before
+        print(f"  ✅ 引擎式{action}成功（{which}）。点击前后 body 文本长度变化: {delta:+d}")
+        if delta > 50:
+            print(f"  ↳ 点后内容显著增加（{delta} 字符），很可能展开了面板/菜单。")
+        elif delta == 0:
+            print(f"  ↳ 点后无内容变化，可能是收起、无 UI 反应，或点击未生效，需结合 state/verify 复查。")
+        else:
+            print(f"  ↳ 点后内容减少（{delta} 字符），可能收起了面板或发生了跳转。")
+
+    @require_page
+    @catch_error("❌ wait 失败")
+    def cmd_wait(self, args):
+        """wait <选择器> [超时秒]：等元素出现（条件渲染），默认 10s。"""
+        if not args:
+            print("用法: wait <锚点名|选择器> [超时秒]")
+            return
+        raw = args[0]
+        sel = _norm_selector(self._resolve_anchor(raw))
+        timeout = int(args[1]) if len(args) > 1 and args[1].isdigit() else 10
+        print(f"⏳ 等待「{sel}」出现（超时 {timeout}s）...")
+        self.page.locator(sel).first.wait_for(state="visible", timeout=timeout * 1000)
+        total = self.page.locator(sel).count()
+        print(f"✅ 「{sel}」已出现，命中 {total} 个")
+
+    @require_page
+    def cmd_click(self, args):
+        """click/select：支持三种目标 —— 锚点名、CSS 选择器、文本。"""
+        if not args:
+            print("用法: click <锚点名|选择器|文本>")
+            return
+
+        raw = " ".join(args)
+        # 优先：锚点名复用（如 click 比例）
+        if args[0] in self.anchors:
+            return self._click_selector(self.anchors[args[0]])
+        # 其次：CSS 选择器（含 # . [ : > 等特征）
+        looks_selector = any(c in raw for c in "#.[:>=\"'")
+        if looks_selector:
+            return self._click_selector(raw)
+        return self._click_text(raw)
+
+    def _click_selector(self, sel):
+        """按 CSS 选择器做引擎式点击（wait visible + click force，取 .last 激活项）。"""
+        try:
+            sel = _norm_selector(sel)
+            loc_all = self.page.locator(sel)
+            total = loc_all.count()
+            if total == 0:
+                print(f"❌ 选择器「{sel}」命中 0")
+                return
+            target = loc_all.last
+            target.wait_for(state="visible", timeout=8000)
+            target.click(force=True)
+            time.sleep(0.8)
+            print(f"✅ 已按选择器点击「{sel}」（命中 {total} 个，点 .last）")
+        except Exception as e:
+            print(f"❌ 选择器点击失败: {str(e)[:80]}")
+
+    def _click_text(self, kw):
+        """按文本匹配点击（精确优先，模糊兜底）。"""
         clicked = self.page.evaluate(
             """(kw) => {
                 const els = Array.from(document.querySelectorAll('button,a,[role="button"],[role="menuitem"]'));
@@ -601,27 +1169,48 @@ class WebCtl:
     def cmd_help(self, args=None):
         print("""
 命令用法（通用浏览器控制台）:
+  ── 连接 / 导航 ──
   open                      连接 9222 浏览器
   page                      看当前页面 URL/标题
   nav <url|站点名>          导航到 URL 或站点(doubao/lovart/jimeng/flow)
+  tabs                      列出所有标签页
+  tab <序号>                切换到指定标签页
+  ── 读取 / 抓取 ──
   buttons                   列出页面所有可见按钮（摸结构）
   find <文本>               搜含文本的元素 + 锚点链（找 data-testid）
-  open-menu <选择器> [click|hover]   展开下拉菜单（默认 hover）
-  click <文本>              点击含该文本的按钮（精确匹配）
-  select <文本>             同 click，精确文本点击
   state <选择器>            查看某元素当前内容（验证是否生效）
   verify <选择器> [; 选择器...]  批量验证多个选择器命中情况（total/visible）
+  html                      抓整页净化 DOM
+  shot [路径]               截图当前页面
+  frames                    列出页面所有 iframe
+  frame <序号> <命令...>    在指定 iframe 内执行 find/state/verify/probe/click/buttons
+  shadow <文本>             穿透 Shadow DOM / iframe 找元素并列出锚点链
+  js <JS代码>               在页面执行任意 JS 并返回结果
+  ── 交互操作 ──
+  click <选择器|文本>       点选择器(引擎式)或含该文本的按钮
+  select <选择器|文本>       同 click
+  open-menu <选择器> [click|hover]   展开下拉菜单（默认 hover）
+  probe <选择器> [first|last] [click|hover]  模拟引擎式点击并报告点后 DOM 变化
+  wait <选择器> [超时秒]     等元素出现（条件渲染，默认 10s）
   type <文本> | type <选择器> <文本>  向输入框打字（拟人延迟）
   upload <选择器> <本地文件路径>      上传文件（file_chooser 拦截/set_input_files）
-  flow <站点名> <提示词> [--img 垫图] [--num 张数]  执行站点预设流程
-  esc [键名]                按键，默认 Esc 关弹窗
   clear [选择器]            清空输入框（Ctrl+A+Backspace）
+  esc [键名]                按键，默认 Esc 关弹窗
   coord <x> <y>             盲点屏幕坐标（收起菜单/弹窗）
-  shot [路径]               截图当前页面
   waitimg <选择器> <张数> [超时秒]   等出图（SRC 差集轮询，默认300s）
-  html                      抓整页净化 DOM
+  getimg <选择器> [保存目录]  下载命中的真图 URL 到本地
+  ── 沉淀 / 流程 ──
+  ui                        扫描当前页收集稳定锚点并存记忆表（跨会话复用）
+  anchor <名称> <选择器>     手动添加/覆盖稳定锚点
+  export-ui [文件名]        把页面 data-testid 聚合成引擎 UI 字典 JSON 落盘
+  flow <站点名> <提示词> [--img 垫图] [--num 张数]  快速复现站点流程（仅探路辅助）
   help                      显示本帮助
   quit / exit               退出
+
+提示：
+  - 探到稳定锚点后用 ui/anchor 记住，下次启动自动加载复用（click/open-menu/state/probe/wait 直接按锚点名操作），不用重复探。
+  - --run 脚本化时命令用 | 分隔；含空格文本可用双引号包裹（自动按引号分组）。
+  - 复杂 JS / 引号场景建议用交互式（python tools/webctl.py）。
 """)
 
     def cmd_quit(self, args=None):
@@ -639,12 +1228,36 @@ class WebCtl:
             self.page = self.browser = self.pw = None
 
     # ---------- 命令路由 ----------
+    @staticmethod
+    def _split_args(line: str):
+        """把命令行按空格分词，但尊重双引号/单引号分组（含空格的文本不会被打散）。"""
+        parts = []
+        buf = []
+        quote = None
+        for ch in line:
+            if ch in "\"'":
+                if quote == ch:
+                    quote = None
+                elif quote is None:
+                    quote = ch
+                else:
+                    buf.append(ch)
+            elif ch.isspace() and quote is None:
+                if buf:
+                    parts.append("".join(buf))
+                    buf = []
+            else:
+                buf.append(ch)
+        if buf:
+            parts.append("".join(buf))
+        return parts
+
     def exec_line(self, line):
         """执行单条命令字符串（REPL 与 --run 共用）。"""
         if not (line := line.strip()):
             return
             
-        parts = line.split()
+        parts = self._split_args(line)
         cmd, args = parts[0].lower(), parts[1:]
         
         if handler := self.CMD.get(cmd):
