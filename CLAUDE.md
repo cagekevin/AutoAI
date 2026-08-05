@@ -102,6 +102,8 @@ Python + Playwright + FastAPI 的多平台 AI 绘画自动化控制中心，通�
 ### 方式一：AI 自主探路（首选）
 Chrome 由启动脚本带 `--remote-debugging-port=9222` 启动，AI 直接接管（复用登录态），无需用户操作。
 
+> **共用一个 Chrome**：browser-harness 和引擎连的是**同一个 9222 端口、同一个 `google_chrome_profile`**，登录态共享。引擎用 playwright `connect_over_cdp`，harness 用 cdp-use 走 CDP WebSocket，两套通道控制同一个浏览器，互不干扰。**注意：探路(harness)和引擎挂机别同时操作同一个标签页。**
+
 #### ⭐ 首选框架：browser-harness（成熟框架，禁止重复造轮子）
 > **浏览器操作一律以 browser-harness 框架为主**（已搬入 `tools/browser_harness/`，见 `tools/browser_harness/SKILL.md` 与 `install.md`）。它提供坐标点击（穿透 iframe/Shadow DOM）、截图驱动探路、任意 JS 执行、元素等待、受控输入填充、CDP 文件上传等成熟能力，**别再自己写 Playwright 探路脚本/再造工具**。
 
